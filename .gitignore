@@ -1,0 +1,27 @@
+# data and results
+data/*
+!data/README.md
+results/*
+!results/README.md
+!results/figures/
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# envs
+.venv/
+venv/
+env/.venv/
+
+# editor
+.vscode/
+.idea/
+*.swp
+.DS_Store

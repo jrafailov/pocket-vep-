@@ -7,3 +7,7 @@ seaborn
 jupyterlab
 torch
 biopython
+xgboost
+requests
+tqdm
+pyarrow

@@ -13,6 +13,10 @@ dependencies:
   - jupyterlab
   - pytorch
   - biopython
+  - xgboost
+  - requests
+  - tqdm
+  - pyarrow
   - pip
   - pip:
       - -e ..

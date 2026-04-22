@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 from Bio.Align import substitution_matrices
 
+from ..data.structure_cache import attach_uniprot, load_plddt_cache
+
 CANONICAL_AA = list("ACDEFGHIKLMNPQRSTVWY")
 
 AA_MASS = {
@@ -38,9 +40,27 @@ def _blosum_lookup(wt: str, mt: str) -> float:
 
 
 class SequenceFeatures:
-    """Physicochemical deltas + BLOSUM62 + one-hot WT/MT identity."""
+    """Sequence-level features per research proposal.
+
+    Always included:
+      - Physicochemical deltas (Delta_Mass, Delta_Hydro, Delta_Charge)
+      - BLOSUM62 substitution score
+      - One-hot WT_AA + MT_AA identity
+
+    Optional (default on):
+      - plddt: AlphaFold per-residue confidence. Requires
+        data/processed/plddt_cache.parquet + data/interim/uniprot_mapping.parquet.
+        Rows without a pLDDT hit (gene not in AlphaFold, position past the
+        canonical isoform, etc.) are dropped.
+
+    Deferred (not implemented; see proposal):
+      - ConSurf conservation scores. See TODO marker below.
+    """
 
     name = "sequence"
+
+    def __init__(self, include_plddt: bool = True) -> None:
+        self.include_plddt = include_plddt
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         parsed = df["protein_change_clean"].str.extract(r"([A-Z])(\d+)([A-Z\*=])")
@@ -64,9 +84,21 @@ class SequenceFeatures:
             _blosum_lookup(wt, mt) for wt, mt in zip(work["WT_AA"], work["MT_AA"])
         ]
 
-        numeric = work[["Delta_Mass", "Delta_Hydro", "Delta_Charge", "BLOSUM62"]]
+        numeric_cols = ["Delta_Mass", "Delta_Hydro", "Delta_Charge", "BLOSUM62"]
 
-        # One-hot with a fixed categorical dtype so every split produces the same columns.
+        if self.include_plddt:
+            # Join pLDDT on (uniprot_id, Position). Rows without a hit are dropped.
+            work["uniprot_id"] = attach_uniprot(df).loc[work.index]
+            plddt = load_plddt_cache().set_index(["uniprot_id", "position"])["plddt"]
+            work["plddt"] = work.set_index(["uniprot_id", "Position"]).index.map(plddt)
+            numeric_cols.append("plddt")
+
+        # TODO(ConSurf): per-proposal, conservation scores belong here.
+        # When added, expect a parquet at data/processed/conserf_scores.parquet
+        # keyed on (uniprot_id, position), and join it the same way as pLDDT.
+
+        numeric = work[numeric_cols]
+
         wt_cat = pd.Categorical(work["WT_AA"], categories=CANONICAL_AA)
         mt_cat = pd.Categorical(work["MT_AA"], categories=CANONICAL_AA)
         wt_oh = pd.get_dummies(wt_cat, prefix="WT_AA", dtype=int)

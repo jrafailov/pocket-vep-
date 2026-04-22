@@ -1,3 +1,16 @@
+"""Feature-block registry.
+
+Each feature category is a plug-in that takes a ClinVar-shaped DataFrame and
+returns a per-row feature DataFrame. Adding a category = write a class + add
+one line to FEATURE_REGISTRY.
+
+Prerequisites per block (see scripts/build_structure_cache.py):
+    sequence   -> data/interim/uniprot_mapping.parquet
+                  data/processed/plddt_cache.parquet
+                  (set SequenceFeatures(include_plddt=False) to skip these)
+    structure  -> data/interim/uniprot_mapping.parquet
+                  data/processed/structure_features.parquet
+"""
 from __future__ import annotations
 
 from typing import Iterable

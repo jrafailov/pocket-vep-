@@ -216,31 +216,46 @@ pickling boundary).
 
 ## 9. Step 6 — Train models
 
-Run with command: 
+Run with command:
 `python scripts/run_experiments.py`
-<!-- 
-In a Python REPL or notebook:
+
+`Trainer.run(feature_keys, model_name)` always evaluates on **both** val and
+test in one call and returns:
 
 ```python
-from src.data import load_clinvar_labeled, make_splits
-from src.models.trainer import Trainer
-
-df = load_clinvar_labeled()
-train_df, val_df, test_df = make_splits(df)
-t = Trainer(train_df, val_df, test_df)
-
-for feats in (["sequence"], ["structure"], ["sequence", "structure"]):
-    for model in ("decision_tree", "mlp", "xgboost"):
-        print(t.run(feats, model, eval_on="val"))
+{
+    "metrics": [val_metrics, test_metrics],   # two compute_metrics dicts
+    "model": <fitted estimator>,
+    "feature_names": [...],
+    "X_train": ..., "X_val": ..., "X_test": ...,
+    "y_val_enc": ..., "y_test_enc": ...,
+    "label_names": [...],
+}
 ```
 
-Iterate on **val** while picking the best model + feature combo. Once
-chosen, call `t.run(..., eval_on="test")` **exactly once** for the
-headline test number — keeps the test set untouched during iteration.
+The runner script writes a fixed layout under `--out-dir` (default
+`results/`):
+
+```
+results/
+    experiments.csv                     # one row per (feature_set, model, split)
+    interpretations/
+        {feature_set}_{model_name}.csv  # method, feature, importance, rank
+```
+
+Useful flags:
+
+- `--models` / `--feature-sets` — subset what runs.
+- `--interpret-methods native permutation shap` — pick interpretation
+  methods (default: all three). MLP has no `native` and skips it with a
+  warning.
+- `--no-interpret` — skip the interpretation pass.
+- `--shap-sample-size 500` — caps SHAP cost (KernelExplainer on MLP).
+- `--out-dir results/run_a/` — redirect the whole output tree.
 
 The headline metrics for this project are `macro_f1` and
 `balanced_accuracy` (the dataset is ~2:1 oncogenic:benign — raw accuracy
-would reward an "always-benign" classifier). -->
+would reward an "always-benign" classifier).
 
 <!-- ---
 

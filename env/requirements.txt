@@ -8,6 +8,7 @@ jupyterlab
 torch
 biopython
 xgboost
+shap
 requests
 tqdm
 pyarrow

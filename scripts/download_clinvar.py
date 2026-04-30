@@ -84,16 +84,55 @@ def clean(raw_path: Path) -> pd.DataFrame:
     )
     print(f"  {len(df):,} raw rows")
 
+    n_raw = len(df)
     df = df[df["Assembly"] == "GRCh38"]
+    n_after_assembly = len(df)
     df = df[df["Type"] == "single nucleotide variant"].copy()
-    print(f"  {len(df):,} rows after GRCh38 + SNV filter")
+    n_after_snv = len(df)
+    print(f"  {n_after_assembly:,} after GRCh38 filter "
+          f"(dropped {n_raw - n_after_assembly:,})")
+    print(f"  {n_after_snv:,} after SNV filter "
+          f"(dropped {n_after_assembly - n_after_snv:,})")
 
     df["protein_change"] = df["Name"].str.extract(r"\(p\.(.*?)\)")
     df["protein_change_clean"] = df["protein_change"].apply(translate_3_to_1)
 
+    # Keep only canonical single-residue substitutions (missense). Excludes
+    # synonymous (e.g. A123=), nonsense (R123*), start-loss (M1?), and any
+    # non-substitution HGVS that slipped past the SNV type filter. AlphaFold
+    # WT-structure features are only meaningful when one residue swaps for
+    # another, so this is a scope filter, not just a cleanup.
+    missense_pat = r"[ACDEFGHIKLMNPQRSTVWY]\d+[ACDEFGHIKLMNPQRSTVWY]"
+    is_missense = df["protein_change_clean"].str.fullmatch(missense_pat, na=False)
+
+    # Bucket the non-missense rows so we can see what the SNV filter was
+    # actually carrying. Mutually exclusive: NaN -> synonymous -> nonsense ->
+    # other, in that priority. Stop-codon-synonymous (`*123=`) hits both `=`
+    # and `*`; we count those as synonymous since the substitution at the
+    # protein level is the no-op, not the stop.
+    non_missense = df.loc[~is_missense, "protein_change_clean"]
+    n_no_protein = non_missense.isna().sum()
+    rest = non_missense.dropna()
+    is_syn = rest.str.contains("=", regex=False)
+    n_synonymous = is_syn.sum()
+    rest_after_syn = rest[~is_syn]
+    is_non = rest_after_syn.str.contains("*", regex=False)
+    n_nonsense = is_non.sum()
+    n_other = (~is_non).sum()
+
+    df = df[is_missense]
+    print(f"  {len(df):,} after missense filter "
+          f"(dropped {n_after_snv - len(df):,}: "
+          f"no_protein_change={n_no_protein:,}, "
+          f"synonymous={n_synonymous:,}, "
+          f"nonsense={n_nonsense:,}, "
+          f"other={n_other:,})")
+
+    n_pre_label = len(df)
     df["ML_Label"] = df.apply(assign_label, axis=1)
     df = df.dropna(subset=["ML_Label", "protein_change_clean"]).copy()
-    print(f"  {len(df):,} labeled rows")
+    print(f"  {len(df):,} labeled rows "
+          f"(dropped {n_pre_label - len(df):,} unlabeled / conflicting)")
     print(df["ML_Label"].value_counts().to_string())
 
     return df

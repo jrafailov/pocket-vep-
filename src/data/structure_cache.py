@@ -54,7 +54,9 @@ def load_structure_cache() -> pd.DataFrame:
         STRUCTURE_CACHE,
         "python scripts/build_structure_cache.py --stage features",
     )
-    return pd.read_parquet(path)
+    # Older parquets built before the uid-dedupe fix can contain duplicate
+    # (uniprot_id, position) rows; downstream reindex needs a unique key.
+    return pd.read_parquet(path).drop_duplicates(["uniprot_id", "position"])
 
 
 def attach_uniprot(df: pd.DataFrame, gene_col: str = "GeneSymbol") -> pd.Series:

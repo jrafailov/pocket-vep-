@@ -22,7 +22,7 @@ from .sequence import SequenceFeatures
 from .structure import StructureFeatures
 
 FEATURE_REGISTRY: dict[str, FeatureBlock] = {
-    "sequence": SequenceFeatures(),
+    "sequence": SequenceFeatures(include_plddt=True),
     "structure": StructureFeatures(),
 }
 

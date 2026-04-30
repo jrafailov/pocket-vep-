@@ -61,6 +61,8 @@ class SequenceFeatures:
 
     def __init__(self, include_plddt: bool = True) -> None:
         self.include_plddt = include_plddt
+        if self.include_plddt:
+            print("Sequence features using PLDDT")
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         parsed = df["protein_change_clean"].str.extract(r"([A-Z])(\d+)([A-Z\*=])")

@@ -476,8 +476,11 @@ def run_dssp(pdb_path: Path) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for key in dssp.keys():
         # key = (chain_id, (' ', resnum, ' '))
+        # dssp[key] = (dssp_index, aa, ss, rel_ASA, phi, psi, ...) -- the
+        # leading dssp_index is easy to miss and silently shifts every
+        # downstream column by one if you skip it.
         resnum = key[1][1]
-        aa, ss, rel_sasa, *_ = dssp[key]
+        _, aa, ss, rel_sasa, *_ = dssp[key]
         try:
             sasa = float(rel_sasa)
         except (TypeError, ValueError):
@@ -608,13 +611,24 @@ def _process_one_protein(
 
 
 def stage_features(
-    mapping: pd.DataFrame, keep_fpocket_raw: bool, n_jobs: int
+    mapping: pd.DataFrame,
+    keep_fpocket_raw: bool,
+    n_jobs: int,
+    limit: int | None = None,
+    out_path: Path | None = None,
 ) -> pd.DataFrame:
+    out_path = out_path or OUT_FEATURES
     FPOCKET_DIR.mkdir(parents=True, exist_ok=True)
     DSSP_DIR.mkdir(parents=True, exist_ok=True)
-    OUT_FEATURES.parent.mkdir(parents=True, exist_ok=True)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    uids = list(mapping["uniprot_id"])
+    # Multiple gene symbols can map to the same UniProt (e.g. histone families),
+    # so dedupe — otherwise we'd run fpocket/DSSP repeatedly on the same protein
+    # and emit duplicate (uniprot_id, position) rows that break reindex joins.
+    uids = list(dict.fromkeys(mapping["uniprot_id"]))
+    if limit is not None:
+        uids = uids[:limit]
+        print(f"[features] --limit {limit}: processing first {len(uids)} uids")
     all_frames: list[pd.DataFrame] = []
     failures: list[tuple[str, str]] = []
     skipped_no_pdb = 0
@@ -650,7 +664,7 @@ def stage_features(
             pool.shutdown(wait=True)
 
     if failures:
-        log = OUT_FEATURES.with_suffix(".failures.json")
+        log = out_path.with_suffix(".failures.json")
         log.write_text(json.dumps(failures, indent=2))
         print(f"[features] {len(failures)} failures logged to {log}")
 
@@ -659,8 +673,8 @@ def stage_features(
         return pd.DataFrame()
 
     out = pd.concat(all_frames, ignore_index=True)
-    out.to_parquet(OUT_FEATURES, index=False)
-    print(f"[features] wrote {OUT_FEATURES}  rows={len(out):,}")
+    out.to_parquet(out_path, index=False)
+    print(f"[features] wrote {out_path}  rows={len(out):,}")
     return out
 
 
@@ -687,6 +701,13 @@ def main() -> None:
                     help="Parallel workers for --stage features. "
                          "Default: cpu_count()-1. Use 1 for a serial run "
                          "(easier to debug worker exceptions).")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="Process only the first N unique UniProt ids "
+                         "in --stage features. For debug/smoke tests.")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="Override the output parquet path for --stage "
+                         "features. Use with --limit so the debug subset "
+                         "doesn't clobber data/processed/structure_features.parquet.")
     args = ap.parse_args()
 
     if args.stage in ("all", "map"):
@@ -708,6 +729,8 @@ def main() -> None:
             mapping,
             keep_fpocket_raw=args.keep_fpocket_raw,
             n_jobs=args.n_jobs,
+            limit=args.limit,
+            out_path=args.out,
         )
 
 

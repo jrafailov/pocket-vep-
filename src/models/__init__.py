@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Callable
 
-from .classifiers import decision_tree, mlp, xgboost
+from .classifiers import mlp, random_forest, xgboost
 
 MODEL_REGISTRY: dict[str, Callable] = {
-    "decision_tree": decision_tree,
+    "random_forest": random_forest,
     "mlp": mlp,
     "xgboost": xgboost,
 }
@@ -17,4 +17,4 @@ def get_model(name: str, **kwargs):
     return MODEL_REGISTRY[name](**kwargs)
 
 
-__all__ = ["MODEL_REGISTRY", "get_model", "decision_tree", "mlp", "xgboost"]
+__all__ = ["MODEL_REGISTRY", "get_model", "random_forest", "mlp", "xgboost"]

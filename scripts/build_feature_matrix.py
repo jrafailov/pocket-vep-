@@ -36,12 +36,16 @@ sys.path.insert(0, str(ROOT))
 from src.data import load_clinvar_labeled  # noqa: E402
 from src.features import schema_path_for  # noqa: E402
 from src.features.base import FeatureBlock  # noqa: E402
+from src.features.evolution import EvolutionFeatures  # noqa: E402
 from src.features.sequence import SequenceFeatures  # noqa: E402
 from src.features.structure import StructureFeatures  # noqa: E402
 
 LABEL_COL = "ML_Label"
 PASSTHROUGH_COLS = ["GeneSymbol", "protein_change_clean"]
+# evolution is intentionally not in DEFAULT_BLOCKS -- opt-in via --blocks until
+# the conservation cache is built and verified for our gene set.
 DEFAULT_BLOCKS = ["sequence", "structure"]
+ALL_BLOCKS = ["sequence", "structure", "evolution"]
 DEFAULT_OUT = ROOT / "data/processed/feature_matrix.parquet"
 
 
@@ -52,6 +56,8 @@ def _instantiate_blocks(names: list[str], include_plddt: bool) -> dict[str, Feat
             blocks[name] = SequenceFeatures(include_plddt=include_plddt)
         elif name == "structure":
             blocks[name] = StructureFeatures()
+        elif name == "evolution":
+            blocks[name] = EvolutionFeatures()
         else:
             raise ValueError(f"Unknown feature block: {name!r}")
     return blocks
@@ -120,8 +126,10 @@ def main() -> None:
                     type=Path)
     ap.add_argument("--out", default=DEFAULT_OUT, type=Path)
     ap.add_argument("--blocks", nargs="+", default=DEFAULT_BLOCKS,
-                    choices=DEFAULT_BLOCKS,
-                    help="Subset of feature blocks to materialize. Default: all.")
+                    choices=ALL_BLOCKS,
+                    help="Feature blocks to materialize. Default: sequence + "
+                         "structure. Pass `--blocks sequence structure evolution` "
+                         "to include ConSurf-DB conservation features.")
     plddt_grp = ap.add_mutually_exclusive_group()
     plddt_grp.add_argument("--include-plddt", dest="include_plddt",
                            action="store_true", default=True,

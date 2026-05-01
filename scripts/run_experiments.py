@@ -45,6 +45,7 @@ from src.models.trainer import Trainer
 ALL_FEATURE_SETS: dict[str, list[str]] = {
     "sequence": ["sequence"],
     "structure": ["structure"],
+    "evolution": ["evolution"],
     "combined": ["sequence", "structure"],
 }
 

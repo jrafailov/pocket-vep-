@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
 
-def decision_tree(class_weight: str | dict | None = "balanced", **_: object):
-    return DecisionTreeClassifier(
-        max_depth=5, class_weight=class_weight, random_state=42
+def random_forest(**_: object):
+    return RandomForestClassifier(
+        n_estimators=300,
+        max_depth=None,
+        min_samples_leaf=2,
+        class_weight="balanced",
+        n_jobs=-1,
+        random_state=42,
     )
 
 

@@ -49,7 +49,7 @@ ALL_FEATURE_SETS: dict[str, list[str]] = {
     "combined": ["sequence", "structure"],
 }
 
-ALL_MODELS = ["decision_tree", "mlp", "xgboost"]
+ALL_MODELS = ["random_forest", "mlp", "xgboost"]
 ALL_INTERPRET_METHODS = ["native", "permutation", "shap"]
 
 EXPERIMENTS_CSV_NAME = "experiments.csv"

@@ -1,12 +1,12 @@
 from .interpret import (
-    interpret_decision_tree,
     interpret_mlp,
+    interpret_random_forest,
     interpret_xgboost,
 )
 from .metrics import compute_metrics, format_report
 
 INTERPRET_REGISTRY = {
-    "decision_tree": interpret_decision_tree,
+    "random_forest": interpret_random_forest,
     "xgboost": interpret_xgboost,
     "mlp": interpret_mlp,
 }
@@ -28,7 +28,7 @@ __all__ = [
     "format_report",
     "INTERPRET_REGISTRY",
     "interpret_model",
-    "interpret_decision_tree",
+    "interpret_random_forest",
     "interpret_xgboost",
     "interpret_mlp",
 ]

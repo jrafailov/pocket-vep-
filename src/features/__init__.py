@@ -10,6 +10,9 @@ Prerequisites per block (see scripts/build_structure_cache.py):
                   (set SequenceFeatures(include_plddt=False) to skip these)
     structure  -> data/interim/uniprot_mapping.parquet
                   data/processed/structure_features.parquet
+    evolution  -> data/processed/conservation_cache.parquet
+                  (built by scripts/build_conservation_cache.py from UCSC
+                  phyloP / phastCons bigWigs; joins on Chromosome + PositionVCF)
 
 Materialized matrix:
     scripts/build_feature_matrix.py runs every block once, inner-joins them,
@@ -27,12 +30,14 @@ from typing import Iterable
 import pandas as pd
 
 from .base import FeatureBlock
+from .evolution import EvolutionFeatures
 from .sequence import SequenceFeatures
 from .structure import StructureFeatures
 
 FEATURE_REGISTRY: dict[str, FeatureBlock] = {
     "sequence": SequenceFeatures(include_plddt=True),
     "structure": StructureFeatures(),
+    "evolution": EvolutionFeatures(),
 }
 
 
@@ -115,6 +120,7 @@ def select_features(
 __all__ = [
     "FEATURE_REGISTRY",
     "FeatureBlock",
+    "EvolutionFeatures",
     "SequenceFeatures",
     "StructureFeatures",
     "build_feature_matrix",

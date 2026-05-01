@@ -4,7 +4,8 @@ This document walks a fresh clone all the way from raw downloads to trained
 models. Follow top-to-bottom; each section's commands are copy-pasteable.
 
 If you only care about the **sequence-only** baseline (no fpocket / DSSP),
-you can skip section 3 and step 5. Sections 1, 2, 4, 6, 7, 9 are sufficient
+you can skip section 3 and step 5. Sections 1, 2, 4, 6, 7, 9 (with
+`--blocks sequence`), and 10 (with `--feature-sets sequence`) are sufficient
 to train a sequence model with pLDDT.
 
 ---
@@ -212,9 +213,67 @@ For debugging worker-side errors, run with `--n-jobs 1` to get the real
 traceback in the foreground (the pool otherwise hides them behind a
 pickling boundary).
 
+### 8c. Debug subset (optional)
+
+To iterate on the feature-engineering or training code without rebuilding
+all 16k proteins, run on a small slice and write to a side parquet:
+
+```bash
+python scripts/build_structure_cache.py --stage features \
+    --limit 100 --n-jobs 4 \
+    --out data/processed/structure_features.debug.parquet
+```
+
+`--limit N` processes only the first N unique UniProt ids (after dedupe).
+`--out` redirects the parquet so the canonical
+`structure_features.parquet` isn't clobbered. Pair this with
+`--structure-cache` in section 9 to build a matching debug feature matrix.
+
 ---
 
-## 9. Step 6 — Train models
+## 9. Step 6 — Materialize the feature matrix
+
+```bash
+python scripts/build_feature_matrix.py
+```
+
+Calls every feature block once, **inner-joins** their outputs (so only
+rows covered by every block survive), attaches `ML_Label` plus
+`GeneSymbol` / `protein_change_clean` for inspection, and writes:
+
+- `data/processed/feature_matrix.parquet` (~100–200 MB compressed)
+- `data/processed/feature_matrix.schema.json` (block → column-list map)
+
+This step is what makes the feature-set comparison **fair**: training
+reads from this single file so `sequence`, `structure`, and `combined`
+all use the same row set. Without it, sequence-only would train on every
+ClinVar row while structure / combined train on only AlphaFold-covered
+rows — and gains from adding structure features would be confounded with
+the smaller row budget.
+
+Useful flags:
+
+- `--no-plddt` — skip the AlphaFold confidence column in the sequence
+  block (lets you build a matrix without `plddt_cache.parquet`).
+- `--blocks sequence` — materialize only one block (e.g. for a
+  sequence-only baseline that doesn't need fpocket / DSSP at all).
+- `--structure-cache <path>` — point the structure block at a debug
+  parquet built via section 8c.
+- `--out <path>` — redirect output (typical for debug matrices).
+
+Debug example, paired with section 8c:
+
+```bash
+python scripts/build_feature_matrix.py \
+    --structure-cache data/processed/structure_features.debug.parquet \
+    --out data/processed/feature_matrix.debug.parquet
+```
+
+Runtime: <1 minute on the full dataset; mostly the per-row pLDDT join.
+
+---
+
+## 10. Step 7 — Train models
 
 Run with command:
 `python scripts/run_experiments.py`
@@ -245,6 +304,9 @@ results/
 
 Useful flags:
 
+- `--feature-matrix <path>` — point at a non-default matrix (typical for
+  debug runs against `feature_matrix.debug.parquet`). Default:
+  `data/processed/feature_matrix.parquet`.
 - `--models` / `--feature-sets` — subset what runs.
 - `--interpret-methods native permutation shap` — pick interpretation
   methods (default: all three). MLP has no `native` and skips it with a
@@ -257,9 +319,35 @@ The headline metrics for this project are `macro_f1` and
 `balanced_accuracy` (the dataset is ~2:1 oncogenic:benign — raw accuracy
 would reward an "always-benign" classifier).
 
+### 10a. End-to-end debug run
+
+Putting sections 8c, 9, and 10 together for a fast iteration loop:
+
+```bash
+# 1. small structure cache (~minutes instead of ~2 hours)
+python scripts/build_structure_cache.py --stage features \
+    --limit 100 --n-jobs 4 \
+    --out data/processed/structure_features.debug.parquet
+
+# 2. matching feature matrix
+python scripts/build_feature_matrix.py \
+    --structure-cache data/processed/structure_features.debug.parquet \
+    --out data/processed/feature_matrix.debug.parquet
+
+# 3. train the grid against it
+python scripts/run_experiments.py \
+    --feature-matrix data/processed/feature_matrix.debug.parquet \
+    --no-interpret \
+    --out-dir results/debug
+```
+
+All three feature-set runs (`sequence`, `structure`, `combined`) will
+report identical train/val/test row counts — that's the fair-comparison
+property.
+
 <!-- ---
 
-## 10. macOS multiprocessing note
+## 11. macOS multiprocessing note
 
 Only relevant if you write a **new** script that calls `stage_features()`
 directly (e.g. for a 50-protein smoke test). macOS uses `spawn` for
@@ -276,7 +364,7 @@ the production command in step 8b works without any extra setup.
 
 --- -->
 
-## 11. Storage budget
+## 12. Storage budget
 
 | Item | Size | Path |
 |---|---|---|
@@ -286,13 +374,14 @@ the production command in step 8b works without any extra setup.
 | libcifpp dictionaries | ~500 MB | `$HOME/miniforge3/envs/bio-tools/var/cache/libcifpp/` |
 | pLDDT cache | ~100–300 MB | `data/processed/plddt_cache.parquet` |
 | Structure features | ~50–200 MB | `data/processed/structure_features.parquet` |
+| Feature matrix | ~100–200 MB | `data/processed/feature_matrix.parquet` (+ `.schema.json`) |
 | **Total** | **~20 GB** | |
 
 You can delete the AlphaFold tarball after extracting (~8 GB freed).
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 **`--stage plddt` reports `0 PDB files to scan`**
 The tarball wasn't extracted, or was extracted to the wrong directory.
@@ -320,4 +409,4 @@ you're on the latest `scripts/build_structure_cache.py`.
 **`BrokenProcessPool` / `attempt has been made to start a new process
 before the current process has finished its bootstrapping phase`**
 Your custom script that calls `stage_features` is missing the
-`if __name__ == "__main__":` guard. See section 10.
+`if __name__ == "__main__":` guard. See section 11.

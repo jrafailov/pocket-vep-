@@ -93,7 +93,7 @@ def _shap_kernel(model, X_train, X_eval, feature_names, sample_size, seed) -> pd
     return _to_importance_df(mean_abs, feature_names)
 
 
-def interpret_decision_tree(
+def interpret_random_forest(
     model,
     X_train: pd.DataFrame,
     X_eval: pd.DataFrame,
@@ -102,12 +102,27 @@ def interpret_decision_tree(
     shap_sample_size: int = 500,
     seed: int = 42,
 ) -> dict[str, pd.DataFrame]:
+    """Random forest interpretation.
+
+    Native importance is the mean impurity decrease across trees; we also keep
+    the per-tree std as `importance_std` so a feature with high mean but huge
+    spread across trees can be flagged as unstable. Impurity-based importance
+    is biased toward high-cardinality features, so permutation importance
+    should usually be the primary read.
+    """
     methods = _normalize_methods(methods)
     feature_names = list(X_train.columns)
     out: dict[str, pd.DataFrame] = {}
 
     if "native" in methods:
-        out["native"] = _to_importance_df(model.feature_importances_, feature_names)
+        per_tree = np.array(
+            [tree.feature_importances_ for tree in model.estimators_]
+        )
+        importance_std = per_tree.std(axis=0)
+        df = _to_importance_df(model.feature_importances_, feature_names)
+        std_lookup = dict(zip(feature_names, importance_std))
+        df["importance_std"] = df["feature"].map(std_lookup)
+        out["native"] = df
     if "permutation" in methods:
         out["permutation"] = _permutation(model, X_eval, y_eval, feature_names, seed)
     if "shap" in methods:

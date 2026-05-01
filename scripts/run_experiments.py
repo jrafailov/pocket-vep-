@@ -45,10 +45,11 @@ from src.models.trainer import Trainer
 ALL_FEATURE_SETS: dict[str, list[str]] = {
     "sequence": ["sequence"],
     "structure": ["structure"],
+    "evolution": ["evolution"],
     "combined": ["sequence", "structure"],
 }
 
-ALL_MODELS = ["decision_tree", "mlp", "xgboost"]
+ALL_MODELS = ["random_forest", "mlp", "xgboost"]
 ALL_INTERPRET_METHODS = ["native", "permutation", "shap"]
 
 EXPERIMENTS_CSV_NAME = "experiments.csv"

@@ -19,6 +19,7 @@ import pandas as pd
 
 PLDDT_CACHE = Path("data/processed/plddt_cache.parquet")
 STRUCTURE_CACHE = Path("data/processed/structure_features.parquet")
+CONSERVATION_CACHE = Path("data/processed/conservation_cache.parquet")
 UNIPROT_MAPPING = Path("data/interim/uniprot_mapping.parquet")
 
 
@@ -46,6 +47,18 @@ def load_plddt_cache() -> pd.DataFrame:
         "python scripts/build_structure_cache.py --stage plddt",
     )
     return pd.read_parquet(path)
+
+
+def load_conservation_cache() -> pd.DataFrame:
+    """Return [Chromosome, PositionVCF, phylop100way, phastcons100way].
+
+    Per-variant evolutionary conservation from UCSC phyloP / phastCons bigWigs.
+    """
+    path = _require(
+        CONSERVATION_CACHE,
+        "python scripts/build_conservation_cache.py",
+    )
+    return pd.read_parquet(path).drop_duplicates(["Chromosome", "PositionVCF"])
 
 
 def load_structure_cache() -> pd.DataFrame:

@@ -6,11 +6,12 @@ and a few passthrough columns, and writes:
     data/processed/feature_matrix.parquet         -- features + label + passthrough
     data/processed/feature_matrix.schema.json     -- {block_name: [columns], ...}
 
-run_experiments.py reads from these so that "sequence", "structure", and
-"combined" experiments all train on the *same row set* (the inner-joined
-intersection). Without this, a sequence-only run uses every ClinVar row and a
-structure run uses only AlphaFold-covered rows -- gains from adding structure
-features get confounded with the smaller row budget.
+run_experiments.py reads from these so that every ablation arm
+(sequence / structure / evolution / their pairwise combos / the union)
+trains on the *same row set* -- the inner-joined intersection of every
+block's coverage. Without this, sequence-only would use every ClinVar row,
+structure-only would use only AlphaFold-covered rows, and gains from adding
+structure features would be confounded with the smaller row budget.
 
 Run after scripts/build_structure_cache.py.
 
@@ -123,9 +124,11 @@ def main() -> None:
     ap.add_argument("--out", default=DEFAULT_OUT, type=Path)
     ap.add_argument("--blocks", nargs="+", default=DEFAULT_BLOCKS,
                     choices=ALL_BLOCKS,
-                    help="Feature blocks to materialize. Default: sequence + "
-                         "structure. Pass `--blocks sequence structure evolution` "
-                         "to include ConSurf-DB conservation features.")
+                    help="Feature blocks to materialize. Default: all three "
+                         "(sequence, structure, evolution). The evolution block "
+                         "joins UCSC phyloP / phastCons conservation scores; "
+                         "drop it with e.g. `--blocks sequence structure` to "
+                         "skip building the conservation cache.")
     ap.add_argument("--structure-cache", type=Path, default=None,
                     help="Override path for structure_features.parquet "
                          "(useful for building a debug matrix from a "

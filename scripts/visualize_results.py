@@ -27,16 +27,30 @@ import pandas as pd
 import seaborn as sns
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CSV = ROOT / "result_v1/experiments.csv"
+DEFAULT_CSV = ROOT / "results/experiments.csv"
 
-FEATURE_SET_ORDER = ["sequence", "structure", "combined"]
-MODEL_ORDER = ["decision_tree", "mlp", "xgboost"]
+# Feature-set order matches ALL_FEATURE_SETS in run_experiments.py: the three
+# orthogonal single-modality arms first, then pairwise combos, then the union.
+FEATURE_SET_ORDER = [
+    "sequence", "structure", "evolution",
+    "seq_struct", "seq_evo", "struct_evo",
+    "all",
+]
+MODEL_ORDER = ["random_forest", "mlp", "xgboost"]
 SPLITS = ["val", "test"]
 
 CLASS_PALETTE = {"benign": "#4C9AFF", "oncogenic": "#E5573F"}
-MODEL_PALETTE = {"decision_tree": "#5E81AC", "mlp": "#A3BE8C", "xgboost": "#BF616A"}
-FEATURE_SET_PALETTE = {"sequence": "#88C0D0", "structure": "#D08770", "combined": "#B48EAD"}
-MODEL_MARKERS = {"decision_tree": "o", "mlp": "s", "xgboost": "^"}
+MODEL_PALETTE = {"random_forest": "#5E81AC", "mlp": "#A3BE8C", "xgboost": "#BF616A"}
+FEATURE_SET_PALETTE = {
+    "sequence":   "#88C0D0",
+    "structure":  "#D08770",
+    "evolution":  "#A3BE8C",
+    "seq_struct": "#B48EAD",
+    "seq_evo":    "#81A1C1",
+    "struct_evo": "#BF616A",
+    "all":        "#2E3440",
+}
+MODEL_MARKERS = {"random_forest": "o", "mlp": "s", "xgboost": "^"}
 
 PlotFn = Callable[[pd.DataFrame, Path, str], None]
 PLOT_REGISTRY: Dict[str, PlotFn] = {}

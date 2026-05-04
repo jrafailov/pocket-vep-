@@ -251,9 +251,9 @@ def stage_download(mapping: pd.DataFrame) -> pd.DataFrame:
 # structure objects. Reads each PDB line-by-line and grabs the CA B-factor,
 # which AlphaFold populates with the pLDDT confidence score (0-100).
 #
-# Runs in minutes for ~20k PDBs. Output is consumed by SequenceFeatures so
-# that sequence-only experiments can include pLDDT without requiring fpocket
-# or mkdssp to be installed.
+# Runs in minutes for ~20k PDBs. Output is consumed by StructureFeatures
+# alongside the fpocket / DSSP outputs -- pLDDT is a structural-confidence
+# signal so it groups with the structure ablation arm, not sequence.
 
 
 def _read_pdb_text(pdb_path: Path) -> str:
@@ -556,8 +556,8 @@ def compute_features_for_protein(
                 "wt_aa": info.get("wt_aa"),
                 "ss": info.get("ss"),
                 "sasa": info.get("sasa", np.nan),
-                # pLDDT lives in plddt_cache.parquet (owned by --stage plddt,
-                # consumed by SequenceFeatures per the research proposal).
+                # pLDDT is emitted separately by --stage plddt into
+                # plddt_cache.parquet and joined back in StructureFeatures.
                 "in_pocket": int(resnum in pocket_residues_union),
                 "dist_to_nearest_pocket": dist_to_nearest,
                 "druggability": druggability,

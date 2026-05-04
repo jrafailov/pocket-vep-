@@ -74,7 +74,16 @@ EXPERIMENTS_CSV_NAME = "experiments.csv"
 SUMMARY_CSV_NAME = "experiments_summary.csv"
 INTERPRETATIONS_SUBDIR = "interpretations"
 DEFAULT_SEEDS = [42, 43, 44, 45, 46]
-SUMMARY_METRICS = ["accuracy", "balanced_accuracy", "macro_f1", "weighted_f1", "roc_auc"]
+SUMMARY_METRICS = [
+    "accuracy",
+    "balanced_accuracy",
+    "macro_f1",
+    "weighted_f1",
+    "roc_auc",
+    "pr_auc",
+    "brier_score",
+    "ece",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -198,12 +207,20 @@ def main() -> None:
                     metrics["feature_set"] = fs_name
                     metrics["seed"] = seed
                     rows.append(metrics)
+                    extras = ""
+                    if "roc_auc" in metrics:
+                        extras += f"  roc_auc={metrics['roc_auc']:.3f}"
+                    if "pr_auc" in metrics:
+                        extras += (
+                            f"  pr_auc={metrics['pr_auc']:.3f}"
+                            f"(base={metrics['pr_auc_baseline']:.2f})"
+                        )
                     print(
                         f"  [{metrics['split']:<4}] "
                         f"accuracy={metrics['accuracy']:.3f}  "
                         f"balanced_acc={metrics['balanced_accuracy']:.3f}  "
                         f"macro_f1={metrics['macro_f1']:.3f}"
-                        + (f"  roc_auc={metrics['roc_auc']:.3f}" if "roc_auc" in metrics else "")
+                        + extras
                     )
 
                 # Interpretation only on the first seed; otherwise we'd write 5x
@@ -255,7 +272,7 @@ def main() -> None:
     print("\n=== Summary (mean +/- std across seeds) ===")
     headline_cols = ["feature_set", "model_name", "split"]
     pretty = summary[headline_cols].copy()
-    for m in ["accuracy", "balanced_accuracy", "macro_f1", "roc_auc"]:
+    for m in ["accuracy", "balanced_accuracy", "macro_f1", "roc_auc", "pr_auc", "brier_score", "ece"]:
         if f"{m}_mean" in summary.columns:
             pretty[m] = [
                 f"{mu:.3f} +/- {sd:.3f}"

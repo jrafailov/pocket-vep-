@@ -202,6 +202,17 @@ def clean(raw_path: Path) -> pd.DataFrame:
           f"(dropped {n_dropped:,} clinsig_fallback rows in non-cancer genes)")
     print("  by source (post):")
     print(df.groupby(["label_source", "ML_Label"]).size().to_string())
+
+    # Codon-degeneracy dedup. Multi-allelic loci where two different alt
+    # alleles produce the same amino-acid substitution generate identical
+    # downstream feature vectors (same residue, same chrom+pos for
+    # conservation, same WT/MT for sequence). Keeping all copies inflates
+    # those residues' weight at fit time. Label conflicts at this key were
+    # confirmed zero in the audit so first-wins is safe.
+    n_pre_dedup = len(df)
+    df = df.drop_duplicates(subset=["GeneSymbol", "protein_change_clean"], keep="first")
+    print(f"  {len(df):,} after protein-change dedup "
+          f"(dropped {n_pre_dedup - len(df):,} codon-degenerate copies)")
     print(df["ML_Label"].value_counts().to_string())
 
     return df

@@ -64,6 +64,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -566,15 +567,10 @@ def compute_features_for_protein(
 
 
 def _cleanup_fpocket_workdir(uid: str) -> None:
-    work = FPOCKET_DIR / uid
-    if not work.exists():
-        return
-    for p in work.rglob("*"):
-        if p.is_file():
-            p.unlink()
-    for p in sorted(work.rglob("*"), reverse=True):
-        if p.is_dir():
-            p.rmdir()
+    # rmtree handles broken symlinks and phantom files that the previous
+    # rglob/unlink loop choked on. ignore_errors keeps a cleanup hiccup
+    # from killing the whole pool via finally-raise.
+    shutil.rmtree(FPOCKET_DIR / uid, ignore_errors=True)
 
 
 def _process_one_protein(

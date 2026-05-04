@@ -25,3 +25,12 @@ env/.venv/
 .idea/
 *.swp
 .DS_Store
+CLAUDE.md
+.env.example
+
+# secrets
+.env
+.env.local
+
+# vendored third-party code
+vendor/

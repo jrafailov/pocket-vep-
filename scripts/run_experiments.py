@@ -1,15 +1,20 @@
-"""Run the 3-models x 3-feature-sets experiment grid.
+"""Run the 3-models x N-feature-sets experiment grid.
+
+Feature sets cover the three orthogonal modalities (sequence, structure,
+evolution) plus all pairwise combos and the full union, so the ablation can
+isolate the contribution of each modality.
 
 Prereqs:
     python scripts/download_clinvar.py        # data/interim/clinvar_labeled.parquet
     python scripts/build_structure_cache.py   # data/processed/{plddt,structure_features}.parquet
+    python scripts/build_conservation_cache.py # data/processed/conservation_cache.parquet
     python scripts/build_feature_matrix.py    # data/processed/feature_matrix.parquet
 
 The materialized feature_matrix.parquet contains every block's columns inner-
 joined to the rows with full coverage. Splitting + training operate on this
 single file so every feature-set variant trains on the SAME row set
-(otherwise structure-only / combined runs would use fewer rows than
-sequence-only, and the comparison would be unfair).
+(otherwise restricted feature sets would use fewer rows and the comparison
+would be unfair).
 
 Run:
     python scripts/run_experiments.py
@@ -43,10 +48,16 @@ from src.features import load_feature_matrix
 from src.models.trainer import Trainer
 
 ALL_FEATURE_SETS: dict[str, list[str]] = {
+    # Single-modality arms.
     "sequence": ["sequence"],
     "structure": ["structure"],
     "evolution": ["evolution"],
-    "combined": ["sequence", "structure"],
+    # Pairwise combos.
+    "seq_struct": ["sequence", "structure"],
+    "seq_evo": ["sequence", "evolution"],
+    "struct_evo": ["structure", "evolution"],
+    # Full union.
+    "all": ["sequence", "structure", "evolution"],
 }
 
 ALL_MODELS = ["random_forest", "mlp", "xgboost"]

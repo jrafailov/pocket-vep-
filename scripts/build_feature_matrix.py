@@ -41,9 +41,7 @@ from src.features.structure import StructureFeatures  # noqa: E402
 
 LABEL_COL = "ML_Label"
 PASSTHROUGH_COLS = ["GeneSymbol", "protein_change_clean"]
-# evolution is intentionally not in DEFAULT_BLOCKS -- opt-in via --blocks until
-# the conservation cache is built and verified for our gene set.
-DEFAULT_BLOCKS = ["sequence", "structure"]
+DEFAULT_BLOCKS = ["sequence", "structure", "evolution"]
 ALL_BLOCKS = ["sequence", "structure", "evolution"]
 DEFAULT_OUT = ROOT / "data/processed/feature_matrix.parquet"
 

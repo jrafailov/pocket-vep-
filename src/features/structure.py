@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ..data.structure_cache import attach_uniprot, load_structure_cache
+from ..data.structure_cache import attach_uniprot, load_plddt_cache, load_structure_cache
 
 CANONICAL_AA = list("ACDEFGHIKLMNPQRSTVWY")
 SS_CATEGORIES = ["H", "E", "L"]
@@ -17,9 +17,12 @@ class StructureFeatures:
       - druggability           : fpocket druggability score of the nearest pocket
       - sasa                   : DSSP relative SASA
       - ss_H / ss_E / ss_L     : one-hot of DSSP 3-state secondary structure
+      - plddt                  : AlphaFold per-residue confidence
 
-    Note: pLDDT is NOT emitted here -- the research proposal categorizes it as a
-    sequence-level feature, so SequenceFeatures owns it.
+    pLDDT is grouped with structure features because it is a structural-quality
+    signal (AlphaFold's confidence at the position), not a property of the
+    amino-acid sequence itself. Keeping it here keeps the sequence-vs-structure
+    ablation clean.
 
     Isoform policy: rows whose parsed WT_AA does not match the AlphaFold
     canonical residue at Position are dropped (ClinVar positions are
@@ -50,6 +53,11 @@ class StructureFeatures:
         joined = cache.reindex(keys)
         joined.index = work.index
 
+        # pLDDT lives in its own parquet because --stage plddt and --stage
+        # features run separately, but the key is identical.
+        plddt = load_plddt_cache().set_index(["uniprot_id", "position"])["plddt"]
+        joined["plddt"] = plddt.reindex(keys).values
+
         # Isoform mismatch filter: AlphaFold canonical residue must agree
         # with the WT_AA that ClinVar encoded for this variant.
         keep = (joined["wt_aa"] == work["WT_AA"]) & joined["wt_aa"].notna()
@@ -58,7 +66,7 @@ class StructureFeatures:
         # Drop any residual NaNs on the structural columns (e.g. positions
         # present in cache but with missing features).
         joined = joined.dropna(
-            subset=["ss", "sasa", "in_pocket", "dist_to_nearest_pocket"]
+            subset=["ss", "sasa", "in_pocket", "dist_to_nearest_pocket", "plddt"]
         )
 
         ss_cat = pd.Categorical(joined["ss"], categories=SS_CATEGORIES)
@@ -73,6 +81,7 @@ class StructureFeatures:
                         "in_pocket",
                         "druggability",
                         "sasa",
+                        "plddt",
                     ]
                 ].astype(float),
                 ss_oh,

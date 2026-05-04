@@ -5,11 +5,10 @@ returns a per-row feature DataFrame. Adding a category = write a class + add
 one line to FEATURE_REGISTRY.
 
 Prerequisites per block (see scripts/build_structure_cache.py):
-    sequence   -> data/interim/uniprot_mapping.parquet
-                  data/processed/plddt_cache.parquet
-                  (set SequenceFeatures(include_plddt=False) to skip these)
+    sequence   -> none beyond the labeled ClinVar parquet
     structure  -> data/interim/uniprot_mapping.parquet
                   data/processed/structure_features.parquet
+                  data/processed/plddt_cache.parquet
     evolution  -> data/processed/conservation_cache.parquet
                   (built by scripts/build_conservation_cache.py from UCSC
                   phyloP / phastCons bigWigs; joins on Chromosome + PositionVCF)
@@ -35,7 +34,7 @@ from .sequence import SequenceFeatures
 from .structure import StructureFeatures
 
 FEATURE_REGISTRY: dict[str, FeatureBlock] = {
-    "sequence": SequenceFeatures(include_plddt=True),
+    "sequence": SequenceFeatures(),
     "structure": StructureFeatures(),
     "evolution": EvolutionFeatures(),
 }

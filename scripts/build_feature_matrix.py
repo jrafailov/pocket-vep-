@@ -15,7 +15,6 @@ features get confounded with the smaller row budget.
 Run after scripts/build_structure_cache.py.
 
     python scripts/build_feature_matrix.py
-    python scripts/build_feature_matrix.py --no-plddt
     python scripts/build_feature_matrix.py --blocks sequence
     python scripts/build_feature_matrix.py \\
         --structure-cache data/processed/structure_features.debug.parquet \\
@@ -42,18 +41,16 @@ from src.features.structure import StructureFeatures  # noqa: E402
 
 LABEL_COL = "ML_Label"
 PASSTHROUGH_COLS = ["GeneSymbol", "protein_change_clean"]
-# evolution is intentionally not in DEFAULT_BLOCKS -- opt-in via --blocks until
-# the conservation cache is built and verified for our gene set.
-DEFAULT_BLOCKS = ["sequence", "structure"]
+DEFAULT_BLOCKS = ["sequence", "structure", "evolution"]
 ALL_BLOCKS = ["sequence", "structure", "evolution"]
 DEFAULT_OUT = ROOT / "data/processed/feature_matrix.parquet"
 
 
-def _instantiate_blocks(names: list[str], include_plddt: bool) -> dict[str, FeatureBlock]:
+def _instantiate_blocks(names: list[str]) -> dict[str, FeatureBlock]:
     blocks: dict[str, FeatureBlock] = {}
     for name in names:
         if name == "sequence":
-            blocks[name] = SequenceFeatures(include_plddt=include_plddt)
+            blocks[name] = SequenceFeatures()
         elif name == "structure":
             blocks[name] = StructureFeatures()
         elif name == "evolution":
@@ -77,13 +74,12 @@ def build(
     data_path: Path,
     out_path: Path,
     block_names: list[str],
-    include_plddt: bool,
 ) -> None:
     print(f"[build] loading {data_path}")
     df = load_clinvar_labeled(data_path)
     print(f"[build]   {len(df):,} labeled rows")
 
-    blocks = _instantiate_blocks(block_names, include_plddt=include_plddt)
+    blocks = _instantiate_blocks(block_names)
 
     parts: dict[str, pd.DataFrame] = {}
     for name, block in blocks.items():
@@ -130,13 +126,6 @@ def main() -> None:
                     help="Feature blocks to materialize. Default: sequence + "
                          "structure. Pass `--blocks sequence structure evolution` "
                          "to include ConSurf-DB conservation features.")
-    plddt_grp = ap.add_mutually_exclusive_group()
-    plddt_grp.add_argument("--include-plddt", dest="include_plddt",
-                           action="store_true", default=True,
-                           help="Include AlphaFold pLDDT in sequence features (default).")
-    plddt_grp.add_argument("--no-plddt", dest="include_plddt", action="store_false",
-                           help="Skip pLDDT (lets you build features without "
-                                "data/processed/plddt_cache.parquet).")
     ap.add_argument("--structure-cache", type=Path, default=None,
                     help="Override path for structure_features.parquet "
                          "(useful for building a debug matrix from a "
@@ -150,7 +139,6 @@ def main() -> None:
         data_path=args.data,
         out_path=args.out,
         block_names=args.blocks,
-        include_plddt=args.include_plddt,
     )
 
 

@@ -23,7 +23,9 @@ class Trainer:
 
     * Legacy / on-the-fly: pass `schema=None`. run() falls back to
       build_feature_matrix(), which inner-joins per-experiment. Row counts
-      will differ across feature sets (sequence > structure ~ combined).
+      will differ across feature sets (sequence > evolution > structure ~
+      union), so cross-arm metric deltas in this mode are confounded with
+      row-budget differences.
     """
 
     def __init__(

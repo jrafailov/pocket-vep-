@@ -44,6 +44,7 @@ class Trainer:
         self,
         feature_keys: Iterable[str],
         model_name: str,
+        seed: int = 42,
     ) -> dict:
         feature_keys = list(feature_keys)
 
@@ -74,7 +75,7 @@ class Trainer:
         neg = int((y_tr_enc == 0).sum())
         spw = neg / max(pos, 1)
 
-        model = get_model(model_name, scale_pos_weight=spw)
+        model = get_model(model_name, seed=seed, scale_pos_weight=spw)
 
         if model_name == "mlp":
             sw = compute_sample_weight("balanced", y_tr_enc)

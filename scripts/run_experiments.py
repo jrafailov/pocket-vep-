@@ -1,8 +1,13 @@
-"""Run the 3-models x N-feature-sets experiment grid.
+"""Run the N-models x N-feature-sets x N-seeds experiment grid.
 
 Feature sets cover the three orthogonal modalities (sequence, structure,
 evolution) plus all pairwise combos and the full union, so the ablation can
 isolate the contribution of each modality.
+
+Each --seed re-splits the data and re-fits the models. Within a single seed
+every (feature_set, model) combo trains on the same train/val/test, so
+arm-vs-arm deltas are paired and split variance cancels. Across seeds we
+average to capture variance from "which genes happened to land in test".
 
 Prereqs:
     python scripts/download_clinvar.py        # data/interim/clinvar_labeled.parquet
@@ -20,6 +25,7 @@ Run:
     python scripts/run_experiments.py
     python scripts/run_experiments.py --models xgboost              # subset of models
     python scripts/run_experiments.py --feature-sets sequence       # subset of feature sets
+    python scripts/run_experiments.py --seeds 42 43 44              # custom seed list
     python scripts/run_experiments.py --interpret-methods native permutation
     python scripts/run_experiments.py --no-interpret                # skip interpretation
     python scripts/run_experiments.py --out-dir results/run_a/      # redirect outputs
@@ -27,8 +33,9 @@ Run:
         --feature-matrix data/processed/feature_matrix.debug.parquet  # debug subset
 
 Output layout (rooted at --out-dir, default `results/`):
-    {out_dir}/experiments.csv
-    {out_dir}/interpretations/{feature_set}_{model_name}.csv
+    {out_dir}/experiments.csv          # raw, one row per (seed, fs, model, split)
+    {out_dir}/experiments_summary.csv  # mean / std across seeds, one row per (fs, model, split)
+    {out_dir}/interpretations/{feature_set}_{model_name}.csv  # first seed only
 """
 from __future__ import annotations
 
@@ -64,7 +71,10 @@ ALL_MODELS = ["random_forest", "mlp", "xgboost"]
 ALL_INTERPRET_METHODS = ["native", "permutation", "shap"]
 
 EXPERIMENTS_CSV_NAME = "experiments.csv"
+SUMMARY_CSV_NAME = "experiments_summary.csv"
 INTERPRETATIONS_SUBDIR = "interpretations"
+DEFAULT_SEEDS = [42, 43, 44, 45, 46]
+SUMMARY_METRICS = ["accuracy", "balanced_accuracy", "macro_f1", "weighted_f1", "roc_auc"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -115,7 +125,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Rows to sample for SHAP (caps KernelExplainer cost on MLP).",
     )
-    ap.add_argument("--seed", default=42, type=int)
+    ap.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        default=DEFAULT_SEEDS,
+        help="Seeds to sweep over. Each seed re-splits the data and re-fits the "
+             "models, yielding one row per (seed, feature_set, model, split) in "
+             "experiments.csv. Default: 5 seeds (42-46).",
+    )
     return ap.parse_args()
 
 
@@ -134,6 +152,16 @@ def _write_interpretation(interp_dir: Path, fs_name: str, model_name: str, impor
     print(f"  wrote interpretation: {out_path}")
 
 
+def _summarize(raw: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate raw per-seed rows into mean / std across seeds."""
+    metric_cols = [c for c in SUMMARY_METRICS if c in raw.columns]
+    grouped = raw.groupby(["feature_set", "model_name", "split"], sort=False)
+    agg_spec = {f"{m}_mean": (m, "mean") for m in metric_cols}
+    agg_spec.update({f"{m}_std": (m, "std") for m in metric_cols})
+    agg_spec["n_seeds"] = ("accuracy", "count")
+    return grouped.agg(**agg_spec).reset_index()
+
+
 def main() -> None:
     args = parse_args()
 
@@ -142,65 +170,67 @@ def main() -> None:
     print(f"  {len(df):,} rows with full feature coverage")
     print(df["ML_Label"].value_counts().to_string())
 
-    train_df, val_df, test_df = make_splits(df, seed=args.seed)
-    print(
-        f"Splits: train={len(train_df):,}  val={len(val_df):,}  test={len(test_df):,}"
-    )
-
-    trainer = Trainer(train_df, val_df, test_df, schema=schema)
-
     out_dir = args.out_dir
     interp_dir = out_dir / INTERPRETATIONS_SUBDIR
+    first_seed = args.seeds[0]
 
     rows: list[dict] = []
-    for fs_name in args.feature_sets:
-        feature_keys = ALL_FEATURE_SETS[fs_name]
-        for model_name in args.models:
-            tag = f"[{fs_name} | {model_name}]"
-            print(f"\n=== {tag} ===")
-            try:
-                result = trainer.run(feature_keys, model_name)
-            except NotImplementedError as e:
-                print(f"  skipped: {e}")
-                continue
-            except Exception as e:
-                print(f"  FAILED: {type(e).__name__}: {e}")
-                continue
+    for seed in args.seeds:
+        print(f"\n########## seed={seed} ##########")
+        train_df, val_df, test_df = make_splits(df, seed=seed)
+        trainer = Trainer(train_df, val_df, test_df, schema=schema)
 
-            for metrics in result["metrics"]:
-                metrics["feature_set"] = fs_name
-                rows.append(metrics)
-                print(
-                    f"  [{metrics['split']:<4}] "
-                    f"accuracy={metrics['accuracy']:.3f}  "
-                    f"balanced_acc={metrics['balanced_accuracy']:.3f}  "
-                    f"macro_f1={metrics['macro_f1']:.3f}"
-                    + (f"  roc_auc={metrics['roc_auc']:.3f}" if "roc_auc" in metrics else "")
-                )
-
-            if not args.no_interpret:
+        for fs_name in args.feature_sets:
+            feature_keys = ALL_FEATURE_SETS[fs_name]
+            for model_name in args.models:
+                tag = f"[seed={seed} | {fs_name} | {model_name}]"
+                print(f"\n=== {tag} ===")
                 try:
-                    importances = interpret_model(
-                        model_name,
-                        result["model"],
-                        result["X_train"],
-                        result["X_val"],
-                        result["y_val_enc"],
-                        methods=args.interpret_methods,
-                        shap_sample_size=args.shap_sample_size,
-                        seed=args.seed,
-                    )
-                    _write_interpretation(interp_dir, fs_name, model_name, importances)
+                    result = trainer.run(feature_keys, model_name, seed=seed)
+                except NotImplementedError as e:
+                    print(f"  skipped: {e}")
+                    continue
                 except Exception as e:
-                    print(f"  interpretation FAILED: {type(e).__name__}: {e}")
+                    print(f"  FAILED: {type(e).__name__}: {e}")
+                    continue
+
+                for metrics in result["metrics"]:
+                    metrics["feature_set"] = fs_name
+                    metrics["seed"] = seed
+                    rows.append(metrics)
+                    print(
+                        f"  [{metrics['split']:<4}] "
+                        f"accuracy={metrics['accuracy']:.3f}  "
+                        f"balanced_acc={metrics['balanced_accuracy']:.3f}  "
+                        f"macro_f1={metrics['macro_f1']:.3f}"
+                        + (f"  roc_auc={metrics['roc_auc']:.3f}" if "roc_auc" in metrics else "")
+                    )
+
+                # Interpretation only on the first seed; otherwise we'd write 5x
+                # the importance files with no good way to merge them.
+                if not args.no_interpret and seed == first_seed:
+                    try:
+                        importances = interpret_model(
+                            model_name,
+                            result["model"],
+                            result["X_train"],
+                            result["X_val"],
+                            result["y_val_enc"],
+                            methods=args.interpret_methods,
+                            shap_sample_size=args.shap_sample_size,
+                            seed=seed,
+                        )
+                        _write_interpretation(interp_dir, fs_name, model_name, importances)
+                    except Exception as e:
+                        print(f"  interpretation FAILED: {type(e).__name__}: {e}")
 
     if not rows:
         print("\nNo successful runs. Nothing to save.")
         return
 
     results_df = pd.DataFrame(rows)
-    # stable column ordering
     front = [
+        "seed",
         "feature_set",
         "model_name",
         "split",
@@ -213,15 +243,26 @@ def main() -> None:
     results_df = results_df[[c for c in cols if c in results_df.columns]]
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / EXPERIMENTS_CSV_NAME
-    results_df.to_csv(out_path, index=False)
-    print(f"\nWrote {out_path}")
-    print("\n=== Summary ===")
-    print(
-        results_df[
-            ["feature_set", "model_name", "split", "accuracy", "balanced_accuracy", "macro_f1"]
-        ].to_string(index=False)
-    )
+    raw_path = out_dir / EXPERIMENTS_CSV_NAME
+    results_df.to_csv(raw_path, index=False)
+    print(f"\nWrote {raw_path}  ({len(results_df)} rows across {len(args.seeds)} seed(s))")
+
+    summary = _summarize(results_df)
+    summary_path = out_dir / SUMMARY_CSV_NAME
+    summary.to_csv(summary_path, index=False)
+    print(f"Wrote {summary_path}")
+
+    print("\n=== Summary (mean +/- std across seeds) ===")
+    headline_cols = ["feature_set", "model_name", "split"]
+    pretty = summary[headline_cols].copy()
+    for m in ["accuracy", "balanced_accuracy", "macro_f1", "roc_auc"]:
+        if f"{m}_mean" in summary.columns:
+            pretty[m] = [
+                f"{mu:.3f} +/- {sd:.3f}"
+                for mu, sd in zip(summary[f"{m}_mean"], summary[f"{m}_std"].fillna(0))
+            ]
+    pretty["n"] = summary["n_seeds"]
+    print(pretty.to_string(index=False))
 
 
 if __name__ == "__main__":

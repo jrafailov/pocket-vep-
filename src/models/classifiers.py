@@ -28,7 +28,11 @@ def mlp(seed: int = 42, **_: object):
             (
                 "clf",
                 MLPClassifier(
-                    hidden_layer_sizes=(32, 16), max_iter=1000, early_stopping=True, n_iter_no_change=20, random_state=seed
+                    hidden_layer_sizes=(32, 16), 
+                    max_iter=1000, 
+                    early_stopping=True, 
+                    n_iter_no_change=20, 
+                    random_state=seed
                 ),
             ),
         ]

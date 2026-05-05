@@ -5,9 +5,14 @@ Run all, run a subset (--plots), or skip some (--exclude).
 
     python scripts/visualize_features.py --list
     python scripts/visualize_features.py
-    python scripts/visualize_features.py --plots class_balance pca_2d_by_class
+    python scripts/visualize_features.py --plots numeric_distributions_report
+    python scripts/visualize_features.py --plots numeric_distributions_report --format pdf
     python scripts/visualize_features.py --exclude wt_to_mt_substitution_heatmap
     python scripts/visualize_features.py --sample 20000
+
+Three feature groups are recognised: sequence (deltas + BLOSUM + WT/MT one-hot),
+structure (pocket / SASA / pLDDT / secondary-structure), and evolution (phyloP,
+phastCons). Plots that reference missing columns are skipped with a warning.
 
 Adding a new plot: define a function that takes (df, out_dir) and decorate it
 with @register_plot("your_name"). It will appear in --list automatically and
@@ -17,7 +22,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Callable, Dict
+from typing import Callable, Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -32,24 +37,56 @@ DEFAULT_OUT = ROOT / "results/eda"
 LABEL_COL = "ML_Label"
 CLASS_ORDER = ["benign", "oncogenic"]
 CLASS_PALETTE = {"benign": "#4C9AFF", "oncogenic": "#E5573F"}
+# Display names for the report. Edit here to rename classes everywhere.
+# Used for legend entries and class-valued x-tick labels.
+CLASS_DISPLAY_NAMES = {"benign": "Benign", "oncogenic": "Oncogenic"}
+# Legend title shown above class entries. None / "" hides the title.
+LEGEND_TITLE: str | None = None
 
 AA_ORDER = list("ACDEFGHIKLMNPQRSTVWY")
 WT_AA_COLS = [f"WT_AA_{a}" for a in AA_ORDER]
 MT_AA_COLS = [f"MT_AA_{a}" for a in AA_ORDER]
 SS_COLS = ["ss_H", "ss_E", "ss_L"]
+EVO_FEATURES = ["phylop100way", "phastcons100way"]
 
 # Numeric features expected in the matrix. Plots tolerate missing columns
 # (e.g. structure columns absent if the matrix was built sequence-only).
 NUMERIC_FEATURES = [
+    # sequence
     "Delta_Mass",
     "Delta_Hydro",
     "Delta_Charge",
     "BLOSUM62",
+    # structure
     "plddt",
     "sasa",
     "dist_to_nearest_pocket",
     "druggability",
+    # evolution
+    "phylop100way",
+    "phastcons100way",
 ]
+
+# Output formats, set from --format in main(). Module-global so plot functions
+# don't need to thread it through every call site.
+FORMATS: List[str] = ["png"]
+
+# Paper-grade styling: applied once at import. Affects every figure the script
+# produces. Override by editing rcParams here, not per-plot.
+sns.set_theme(style="whitegrid", context="paper", font_scale=0.95)
+plt.rcParams.update({
+    "savefig.dpi": 300,
+    "savefig.bbox": "tight",
+    "figure.dpi": 130,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.titleweight": "bold",
+    "axes.titlesize": 10,
+    "axes.labelsize": 9,
+    "legend.fontsize": 8,
+    "legend.frameon": False,
+    "font.family": "sans-serif",
+})
 
 PlotFn = Callable[[pd.DataFrame, Path], None]
 PLOT_REGISTRY: Dict[str, PlotFn] = {}
@@ -64,12 +101,34 @@ def register_plot(name: str):
     return deco
 
 
+def _apply_class_display(ax) -> None:
+    """Rewrite class labels on an axes' legend and x-ticks via CLASS_DISPLAY_NAMES.
+
+    No-op for axes without a class legend or class-valued x-ticks. Edit
+    CLASS_DISPLAY_NAMES / LEGEND_TITLE at the top of the file to change names.
+    """
+    leg = ax.get_legend()
+    if leg is not None:
+        for txt in leg.get_texts():
+            raw = txt.get_text()
+            txt.set_text(CLASS_DISPLAY_NAMES.get(raw, raw))
+        leg.set_title(LEGEND_TITLE if LEGEND_TITLE else "")
+
+    xtick_texts = [t.get_text() for t in ax.get_xticklabels()]
+    if any(t in CLASS_DISPLAY_NAMES for t in xtick_texts):
+        ax.set_xticks(ax.get_xticks())  # pin locator to silence FixedLocator warning
+        ax.set_xticklabels([CLASS_DISPLAY_NAMES.get(t, t) for t in xtick_texts])
+
+
 def _save(fig, out_dir: Path, name: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{name}.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight")
+    for ax in fig.axes:
+        _apply_class_display(ax)
+    for ext in FORMATS:
+        path = out_dir / f"{name}.{ext}"
+        fig.savefig(path)
+        print(f"[eda] wrote {path}")
     plt.close(fig)
-    print(f"[eda] wrote {path}")
 
 
 def _present(df: pd.DataFrame, cols: list[str]) -> list[str]:
@@ -120,6 +179,36 @@ def numeric_distributions(df: pd.DataFrame, out_dir: Path) -> None:
     _save(fig, out_dir, "numeric_distributions")
 
 
+@register_plot("numeric_distributions_report")
+def numeric_distributions_report(df: pd.DataFrame, out_dir: Path) -> None:
+    """Curated 2x2 KDE grid for the report: 1 sequence + 2 structure + 1 evolution."""
+    picks = [
+        ("BLOSUM62", "Sequence"),
+        ("plddt", "Structure"),
+        ("sasa", "Structure"),
+        ("phylop100way", "Evolution"),
+    ]
+    picks = [(c, g) for c, g in picks if c in df.columns]
+    if not picks:
+        print("[eda] numeric_distributions_report: no picked features present, skipping")
+        return
+    fig, axes = plt.subplots(2, 2, figsize=(5.5, 3.8))
+    axes_flat = axes.flatten()
+    for i, (ax, (col, group)) in enumerate(zip(axes_flat, picks)):
+        sns.kdeplot(
+            data=df, x=col, hue=LABEL_COL, hue_order=CLASS_ORDER,
+            palette=CLASS_PALETTE, common_norm=False, fill=True,
+            alpha=0.35, linewidth=1.0, ax=ax, legend=(i == 0),
+        )
+        ax.set_title(f"{col}  ({group})")
+        ax.set_xlabel("")
+        ax.set_ylabel("density" if i % 2 == 0 else "")
+    for ax in axes_flat[len(picks):]:
+        ax.set_visible(False)
+    fig.tight_layout()
+    _save(fig, out_dir, "numeric_distributions_report")
+
+
 @register_plot("correlation_heatmap")
 def correlation_heatmap(df: pd.DataFrame, out_dir: Path) -> None:
     feats = _present(df, NUMERIC_FEATURES)
@@ -162,6 +251,11 @@ def blosum_vs_delta_mass(df: pd.DataFrame, out_dir: Path) -> None:
 @register_plot("plddt_vs_sasa")
 def plddt_vs_sasa(df: pd.DataFrame, out_dir: Path) -> None:
     _scatter_by_class(df, "plddt", "sasa", out_dir, "plddt_vs_sasa")
+
+
+@register_plot("phylop_vs_phastcons")
+def phylop_vs_phastcons(df: pd.DataFrame, out_dir: Path) -> None:
+    _scatter_by_class(df, "phylop100way", "phastcons100way", out_dir, "phylop_vs_phastcons")
 
 
 @register_plot("pocket_membership_by_class")
@@ -308,12 +402,17 @@ def main() -> None:
                    help="Print registered plot names and exit.")
     p.add_argument("--sample", type=int, default=None,
                    help="Random subsample N rows for fast iteration.")
+    p.add_argument("--format", choices=["png", "pdf", "both"], default="png",
+                   help="Output file format. Use 'pdf' for vector report figures.")
     args = p.parse_args()
 
     if args.list:
         for name in PLOT_REGISTRY:
             print(name)
         return
+
+    global FORMATS
+    FORMATS = ["png", "pdf"] if args.format == "both" else [args.format]
 
     print(f"[eda] loading {args.matrix}")
     df = pd.read_parquet(args.matrix)

@@ -3,23 +3,26 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from Bio.Align import substitution_matrices
+from Bio.Data.IUPACData import protein_weights
+from Bio.SeqUtils.ProtParamData import kd
 
 CANONICAL_AA = list("ACDEFGHIKLMNPQRSTVWY")
 
-AA_MASS = {
-    "A": 71.04, "R": 156.19, "N": 114.10, "D": 115.09, "C": 103.14,
-    "E": 129.12, "Q": 128.13, "G": 57.05, "H": 137.14, "I": 113.16,
-    "L": 113.16, "K": 128.17, "M": 131.19, "F": 147.18, "P": 97.12,
-    "S": 87.08, "T": 101.11, "W": 186.21, "Y": 163.18, "V": 99.13,
-}
+# Average mass of one water molecule (Da). A residue inside a peptide chain
+# has lost one H2O relative to the free amino acid via the peptide bond.
+_WATER_DA = 18.01528
 
-AA_HYDRO = {
-    "A": 1.8, "R": -4.5, "N": -3.5, "D": -3.5, "C": 2.5,
-    "E": -3.5, "Q": -3.5, "G": -0.4, "H": -3.2, "I": 4.5,
-    "L": 3.8, "K": -3.9, "M": 1.9, "F": 2.8, "P": -1.6,
-    "S": -0.8, "T": -0.7, "W": -0.9, "Y": -1.3, "V": 4.2,
-}
+# Average residue masses in Daltons. Source: Bio.Data.IUPACData.protein_weights
+# (free amino acid average mass) minus _WATER_DA. Pinned by tests/test_sequence_constants.py.
+AA_MASS = {aa: round(protein_weights[aa] - _WATER_DA, 4) for aa in CANONICAL_AA}
 
+# Kyte-Doolittle hydropathy index. Source: Bio.SeqUtils.ProtParamData.kd
+# (Kyte J, Doolittle RF. J Mol Biol 157(1):105-32, 1982).
+AA_HYDRO = {aa: kd[aa] for aa in CANONICAL_AA}
+
+# Net charge at pH 7. R/K fully protonated, D/E fully deprotonated; H is ~10%
+# protonated at pH 7 (pKa ~6.0). No clean BioPython equivalent -- values match
+# standard biochemistry references (Lehninger; IPC2 / Bjellqvist pKa tables).
 AA_CHARGE = {
     "R": 1, "K": 1, "H": 0.1,
     "D": -1, "E": -1,

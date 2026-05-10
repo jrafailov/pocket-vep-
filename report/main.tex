@@ -1,0 +1,393 @@
+% =============================================================================
+% Pocket-sensitive somatic VEP -- final report
+% Build:  make            (latexmk -> main.pdf)
+% Clean:  make clean
+%
+% COURSE CONSTRAINTS:
+%   - Main body: max 6 pages (3-4 ideal). References + appendices unlimited.
+%   - Font: at least 11pt throughout (NeurIPS style hardcodes 10pt; switch
+%     to article 11pt later if the grader enforces).
+%
+% PAGE BUDGET:
+%   ~1.0 pg  Title + Background + Motivation
+%   ~1.5 pg  Methods (pipeline, dataset, features, EDA, models)
+%   ~1.5 pg  Results (macro-F1 + 1 sub-result)
+%   ~1.0 pg  Discussion + Conclusion
+%
+% OWNERSHIP TAGS (grep these to find your work):
+%   JR: = Johnathan to do
+%   RW: = Ray to do (writing or plot)
+% =============================================================================
+
+\documentclass{article}
+
+\usepackage[final]{neurips_2024}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath, amssymb}
+\usepackage{siunitx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{underscore}
+% natbib is auto-loaded by neurips_2024.sty; do not load here.
+
+\graphicspath{{figures/}}
+
+% Visible per-person TODO markers (render in the PDF so each owner can see
+% what's left). Strip the macros once the doc is done.
+\newcommand{\todoJR}[1]{{\color{red!80!black}\textbf{[JR:}~#1\textbf{]}}}
+\newcommand{\todoRW}[1]{{\color{blue!70!black}\textbf{[RW:}~#1\textbf{]}}}
+
+% Renders a framed placeholder if the figure file is missing, so the build
+% never blocks on art that hasn't landed yet. \figormissing brands the
+% box [RW] (Ray's figures); \figormissingjr brands it [JR].
+\newcommand{\figplaceholder}[3]{%
+  \IfFileExists{figures/#3}%
+    {\includegraphics[#2]{#3}}%
+    {\fbox{\parbox[c][6cm][c]{0.95\linewidth}{\centering
+      #1\quad\texttt{figures/#3}\par
+      \textit{(missing -- placeholder)}}}}%
+}
+\newcommand{\figormissing}[2][width=\linewidth]%
+  {\figplaceholder{{\color{blue!70!black}\textbf{[RW]}}}{#1}{#2}}
+\newcommand{\figormissingjr}[2][width=\linewidth]%
+  {\figplaceholder{{\color{red!80!black}\textbf{[JR]}}}{#1}{#2}}
+
+\title{Pocket-sensitive somatic variant effect prediction (VEP)\\
+  using AlphaFold-predicted protein structures}
+
+\author{%
+  Ray Wen \quad Johnathan Rafailov \\
+  Courant Institute of Mathematical Sciences \\
+  New York University \\
+  \texttt{\{rw2604, rafaij01\}@nyu.edu}
+}
+
+\date{Artificial Intelligence in Genomics Final Project, Spring 2026}
+
+\begin{document}
+\maketitle
+
+\todoJR{abstract once results section is locked in.}
+
+\section{Background}
+\label{sec:background}
+
+Over the past twenty years, there have been a handful of recurrent cancer
+mutations that have rewritten how certain patients are clinically treated.
+BRAF V600E moved a significant chunk of metastatic melanomas off cytotoxic
+only regimens. EGFR exon 19 deletions and L858R allowed many with NSCLC to
+be managed with a daily tablet.
+
+Cancer treatment now incorporates tumor sequencing and other biomarker
+assays to identify actionable alterations. Examples include BRAF V600E in
+melanoma, EGFR ex19 deletions in NSCLC, KRAS G12C across multiple tumor
+types, and HER2 amplification in breast/gaastric cancers. While the promise
+of personalized medicine (matched therapy to mutational profile) has not
+fully reached its potential and conventional modalities of treatment
+(chemo, surgery, immunotherapy) remain bedrocks of cancer care, molecularly
+targeted therapies have transformed outcomes for particular subsets of
+patients with particular driver alterations. Variant interpretation, as a
+result, is at the crux of any clinical workflow, informing trial and
+therapeutic eligibility, treatment, and ultimately prognosis.
+
+\todoJR{paragraph 2 -- other approaches.}
+
+\todoJR{paragraph 3 -- our motivations / background into folding
+algorithms / importance in integration, uniqueness, hypothesis.}
+
+\section{Motivations \& Hypotheses}
+\label{sec:motivation}
+
+\todoJR{write.}
+
+\section{Methods}
+\label{sec:methods}
+
+% JR: drop figures/pipeline.png. Suggested content: ClinVar -> UniProt
+% mapping -> AlphaFold structures + fpocket / DSSP + UCSC bigWigs ->
+% three feature blocks -> classifier.
+\begin{figure}[t]
+  \centering
+  \figormissingjr[width=0.95\linewidth]{pipeline.png}
+  \caption{End-to-end pipeline. Variant labels are drawn from ClinVar and
+  bridged to AlphaFold structures via UniProt; sequence, structure
+  (\texttt{fpocket} + \texttt{mkdssp} + pLDDT), and evolutionary
+  (phyloP / phastCons) feature blocks are joined into a single feature
+  matrix, then evaluated under a gene-grouped split.}
+  \label{fig:pipeline}
+\end{figure}
+
+\subsection{Dataset}
+We downloaded the \texttt{variant\_summary} from ClinVar which provides us
+with \_\_ rows of Gene Variants and its Oncogenicity / Clinical Significance
+label \citep{landrum2018clinvar}. Using the Gene and Variant pairs, we can
+then produce a mapping to UniProt, yielding around 16k unique gene symbols,
+consisting of multiple isoforms.
+
+For AlphaFold structure information, we first downloaded the AlphaFold human
+proteome, which contains \_\_ pdb files \citep{jumper2021alphafold,
+varadi2022alphafolddb}. And matching the gene and variant, we can extract
+the structure features from AlphaFold and pairing with external libraries
+such as fpocket \citep{leguilloux2009fpocket} and DSSP
+\citep{kabsch1983dssp}.
+
+For Evolutionary information, \_\_\_ \todoJR{fill in.}
+
+\subsection{Feature Engineering}
+A full list of features that we included can be found in the Appendix.
+
+\paragraph{Sequence Level.}
+Amino Acid information: We extract Amino Acid mass, Kyte-Doolittle hydropathy
+index, and BLOcks SUbstitution Matrix (BLOSUM) from Biopython
+\citep{cock2009biopython} and calculated the change in mass, hydropathy
+index, and charge as well to be incorporated as a sequence feature.
+
+\paragraph{Structure Level.}
+\todoJR{write.}
+
+\paragraph{Evolutionary Level.}
+\todoJR{write.}
+
+\subsection{Data Exploration}
+
+% RW: drop figures/numeric_distributions_report.png (per-feature
+% distributions split by class label, three blocks).
+\begin{figure}[t]
+  \centering
+  \figormissing{numeric_distributions_report.png}
+  \caption{Distributions of a representative subset of features across the
+  three feature blocks (sequence, structure, evolution), split by class
+  label.}
+  \label{fig:distributions}
+\end{figure}
+
+Figure~\ref{fig:distributions} shows a subset of the features selected in
+all three feature sets, Sequence, Structure, and Evolution. For the sequence
+feature BLOSUM62, we see that the distribution is somewhat distinct in two
+classes where Oncogenic variants tend to have negative values and benign
+variants tend to have positive or 0 values, but there are still some overlap
+between the two. More obvious differences lies within Structure and
+Evolution features such as the pLDDT and SASA (Solvent-Accessible Surface
+Area), showing a more obvious difference in peak for Benign and Oncogenic.
+Similar behavior can be seen in \texttt{phylop100way} feature from the
+Evolution set. These indicate that Structure and Evolution set shows
+distinct features and correlation with the oncogenicity/pathogenicity of
+the variant, and it can potentially be good predictors.
+
+\subsection{Model Choice \& Evaluation}
+We chose to evaluate our data on 3 different models to ensure a wide
+variety of model types are covered, and the effects of feature set
+selection are fully studied. We chose to implement Random Forest,
+MultiLayer Perceptron (Neural Network, MLP), and XGBoost. For Random
+Forest, we use sklearn's \texttt{RandomForestClassifier} with 300
+estimators with no max depth restriction and a minimum sample leaf of 2,
+we also include the class weight as balanced \citep{pedregosa2011sklearn}.
+For MLP, we use sklearn's \texttt{MLPClassifier} with two hidden layers of
+size 32 and 16 respectively and a max iteration of 500
+\citep{pedregosa2011sklearn}. And for XGBoost, we use \texttt{XGBClassifier}
+from the xgboost library with 100 estimators, max depth of 4, learning rate
+of 0.1, \texttt{scale\_pos\_weight} of 1, and log loss as the evaluation
+metric \citep{chen2016xgboost}.
+
+\subsection{Class Distribution}
+The class label distribution is mildly imbalanced ($\approx$1.4:1
+benign:oncogenic), so class balancing techniques are not strictly
+necessary. Nonetheless, we applied class reweighting to Random Forest and
+XGBoost models, as it is natively supported through \texttt{class\_weight}
+and \texttt{scale\_pos\_weight} inputs, while keeping MLP models trained on
+natural distribution, as MLPs do not natively support class imbalance. The
+impact of class imbalance is expected to be small.
+
+\section{Results}
+\label{sec:results}
+
+A full table of the results for the 7 feature set combinations and 3 models
+can be found in the Appendix (Table~\ref{tab:full-results}).
+
+% RW: drop figures/headline_macro_f1.png (grouped bars, macro-F1 by
+% feature configuration x model, with std error bars).
+\begin{figure}[t]
+  \centering
+  \figormissing[width=0.9\linewidth]{headline_macro_f1.png}
+  \caption{Headline macro-F1 across feature configurations and models.
+  Bars show the mean over 5 seeds; error bars are $\pm 1$ std.}
+  \label{fig:headline}
+\end{figure}
+
+\subsection{Macro F1 Analysis}
+\begin{itemize}
+  \item All combined has best performance, achieving highest F1 Macro score
+        on all 3 models with stable std, not too much deviation across 5
+        seeds.
+  \item 2 feature sets all outperform single feature sets, this indicates
+        that it is not just one dominating feature set, but incorporating
+        more features do improve classification performance.
+  \item Training also becomes more stable as we see smaller standard
+        deviation ranges as features increase.
+\end{itemize}
+\todoJR{tighten the bullets above into 1-2 paragraphs of prose for the
+final draft.}
+
+\subsection{Lift Graph Analysis}
+
+% RW: drop figures/feature_lift.png (12 bars: 4 multi-modal sets x 3
+% models, lift over best single-modality constituent).
+\begin{figure}[t]
+  \centering
+  \figormissing[width=0.9\linewidth]{feature_lift.png}
+  \caption{Lift over the best constituent single modality, for each
+  multi-modal feature set and each model. Positive lift indicates the
+  modalities are complementary rather than redundant.}
+  \label{fig:lift}
+\end{figure}
+
+Lift means comparing with best single feature set performance, the
+improvement gained. So Sequence + Structure means
+$(\textrm{Sequence} + \textrm{Structure}) -
+\max(\textrm{Sequence}, \textrm{Structure})$.
+
+\begin{itemize}
+  \item All combine yields highest lift in Random Forest, Random forest
+        seems to benefit the most from additional features.
+  \item Evolution only yields less improvement, it might be expected since
+        there's only 2 new features.
+\end{itemize}
+
+\noindent``Across all multi-modal combinations and all three models, the
+lift over the best constituent single modality was positive ($+0.03$ to
+$+0.12$ macro-F1), indicating sequence, structure, and evolutionary
+features carry complementary signal.''
+
+\subsection{Feature Lift}
+For each multi-modal feature set, we compute
+\[
+  \mathrm{lift} = \mathrm{macro\_f1}(\textrm{combined}) -
+                  \max\bigl(\mathrm{macro\_f1}\ \text{of its constituent
+                  single modalities}\bigr).
+\]
+
+For each of the 4 multi-modal sets (\texttt{seq\_struct}, \texttt{seq\_evo},
+\texttt{struct\_evo}, \texttt{all}), per model:
+\begin{itemize}
+  \item \texttt{seq\_struct} / RF:
+        $0.814 - \max(\text{sequence}=0.684, \text{structure}=0.723) =
+         0.814 - 0.723 = +0.091$.
+  \item \texttt{all} / RF: $0.863 - \max(0.684, 0.723, 0.739) = +0.124$.
+\end{itemize}
+
+\paragraph{What positive vs zero lift means.}
+\begin{itemize}
+  \item Lift $> 0$: combining genuinely adds information beyond the best
+        single ingredient -- the modalities are complementary.
+  \item Lift $\approx 0$: combining gives you nothing you couldn't get
+        from just using the best single feature alone (modalities are
+        redundant).
+  \item Lift $< 0$ (didn't happen in our data): combining hurts -- the
+        model is confused by the extra dimensions.
+\end{itemize}
+
+A single grouped-bar figure showing all 12 lifts (4 multi-modal sets
+$\times$ 3 models) all positive is direct evidence of complementarity.
+Without it, a reader could counter ``maybe \texttt{all} is just evolution
+doing all the work'' -- feature lift forecloses that interpretation by
+subtracting out the best single component.
+
+\section{Discussion}
+\label{sec:discussion}
+
+% JR: drop figures/case_study.png (a representative variant where
+% structure features flipped the call -- e.g. residue rendered on the
+% AlphaFold structure with its nearest fpocket pocket called out).
+% OPTIONAL: if we drop the case study, delete this figure block and
+% expand "Feature interpretation" below to cover what the case study
+% would have shown qualitatively.
+\begin{figure}[t]
+  \centering
+  \figormissingjr[width=0.7\linewidth]{case_study.png}
+  \caption{Case study: a variant where the structure block flipped the
+  prediction. The residue (red) sits at the edge of an fpocket-predicted
+  binding pocket (blue mesh) on the AlphaFold structure.}
+  \label{fig:case-study}
+\end{figure}
+
+\paragraph{Discussion Point 1: Feature interpretation.}
+\todoJR{write.}
+
+\paragraph{Discussion Point 2: Different model types affect performance
+less as more features are added.}
+``The model gap shrinks as feature richness grows. The headline finding is
+feature-driven, not model-driven. Across all three model classes, adding
+structure and evolutionary features yielded a consistent $+0.17$--$0.20$
+macro-F1 improvement, while differences between models within a feature set
+were $\leq 0.015$ on the richer feature sets -- within seed-to-seed noise.
+Model choice mattered most on the impoverished sequence-only setting,
+where MLP lagged tree-based models, suggesting tree models are more robust
+under low-signal conditions.''
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+\todoJR{short paragraph.}
+
+\bibliographystyle{unsrtnat}
+\bibliography{refs}
+
+\appendix
+
+\section{Full results}
+\label{app:full-results}
+
+\begin{table}[h]
+  \centering
+  \caption{Test split, mean $\pm$ std across 5 seeds. Bold = best feature
+  set within each model (per metric); lower = better for ECE.}
+  \label{tab:full-results}
+  \footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{llccccc}
+    \toprule
+    Feature set & Model & Macro F1 & PR-AUC & ROC-AUC & Bal.\ Acc. & ECE \\
+    \midrule
+    Sequence  & Random Forest & $0.684 \pm 0.018$ & $0.654 \pm 0.041$ & $0.747 \pm 0.018$ & $0.688 \pm 0.020$ & $0.074 \pm 0.013$ \\
+    Sequence  & MLP           & $0.651 \pm 0.027$ & $0.651 \pm 0.039$ & $0.746 \pm 0.018$ & $0.650 \pm 0.025$ & $0.038 \pm 0.013$ \\
+    Sequence  & XGBoost       & $0.682 \pm 0.017$ & $0.656 \pm 0.041$ & $0.748 \pm 0.018$ & $0.685 \pm 0.017$ & $0.076 \pm 0.013$ \\
+    \midrule
+    Structure & Random Forest & $0.723 \pm 0.034$ & $0.718 \pm 0.027$ & $0.806 \pm 0.037$ & $0.722 \pm 0.035$ & $0.042 \pm 0.028$ \\
+    Structure & MLP           & $0.736 \pm 0.039$ & $0.739 \pm 0.035$ & $0.817 \pm 0.044$ & $0.737 \pm 0.040$ & $0.059 \pm 0.019$ \\
+    Structure & XGBoost       & $0.739 \pm 0.037$ & $0.738 \pm 0.033$ & $0.822 \pm 0.042$ & $0.744 \pm 0.041$ & $0.070 \pm 0.019$ \\
+    \midrule
+    Evolution & Random Forest & $0.739 \pm 0.020$ & $0.702 \pm 0.027$ & $0.804 \pm 0.022$ & $0.741 \pm 0.021$ & $0.104 \pm 0.014$ \\
+    Evolution & MLP           & $0.775 \pm 0.026$ & $0.762 \pm 0.029$ & $0.848 \pm 0.017$ & $0.774 \pm 0.027$ & $\mathbf{0.037 \pm 0.006}$ \\
+    Evolution & XGBoost       & $0.776 \pm 0.016$ & $0.776 \pm 0.036$ & $0.855 \pm 0.018$ & $0.781 \pm 0.016$ & $0.065 \pm 0.006$ \\
+    \midrule
+    Seq + Struct  & Random Forest & $0.814 \pm 0.008$ & $0.853 \pm 0.011$ & $0.896 \pm 0.009$ & $0.816 \pm 0.008$ & $0.028 \pm 0.006$ \\
+    Seq + Struct  & MLP           & $0.801 \pm 0.005$ & $0.843 \pm 0.009$ & $0.890 \pm 0.008$ & $0.801 \pm 0.011$ & $0.040 \pm 0.028$ \\
+    Seq + Struct  & XGBoost       & $0.813 \pm 0.010$ & $0.856 \pm 0.009$ & $0.897 \pm 0.008$ & $0.819 \pm 0.009$ & $0.047 \pm 0.011$ \\
+    \midrule
+    Seq + Evo     & Random Forest & $0.795 \pm 0.012$ & $0.818 \pm 0.028$ & $0.880 \pm 0.013$ & $0.798 \pm 0.012$ & $0.058 \pm 0.009$ \\
+    Seq + Evo     & MLP           & $0.807 \pm 0.016$ & $0.832 \pm 0.021$ & $0.893 \pm 0.014$ & $0.811 \pm 0.016$ & $\mathbf{0.024 \pm 0.008}$ \\
+    Seq + Evo     & XGBoost       & $0.813 \pm 0.014$ & $0.846 \pm 0.025$ & $0.898 \pm 0.013$ & $0.820 \pm 0.014$ & $0.053 \pm 0.006$ \\
+    \midrule
+    Struct + Evo  & Random Forest & $0.819 \pm 0.018$ & $0.839 \pm 0.022$ & $0.899 \pm 0.016$ & $0.820 \pm 0.017$ & $\mathbf{0.022 \pm 0.005}$ \\
+    Struct + Evo  & MLP           & $0.803 \pm 0.022$ & $0.826 \pm 0.030$ & $0.888 \pm 0.022$ & $0.808 \pm 0.024$ & $0.047 \pm 0.023$ \\
+    Struct + Evo  & XGBoost       & $0.818 \pm 0.019$ & $0.848 \pm 0.020$ & $0.902 \pm 0.016$ & $0.825 \pm 0.019$ & $0.046 \pm 0.017$ \\
+    \midrule
+    All Combined  & Random Forest & $\mathbf{0.863 \pm 0.014}$ & $\mathbf{0.901 \pm 0.016}$ & $\mathbf{0.936 \pm 0.011}$ & $\mathbf{0.866 \pm 0.012}$ & $0.030 \pm 0.005$ \\
+    All Combined  & MLP           & $\mathbf{0.854 \pm 0.014}$ & $\mathbf{0.892 \pm 0.018}$ & $\mathbf{0.930 \pm 0.012}$ & $\mathbf{0.855 \pm 0.014}$ & $0.021 \pm 0.007$ \\
+    All Combined  & XGBoost       & $\mathbf{0.857 \pm 0.014}$ & $\mathbf{0.904 \pm 0.011}$ & $\mathbf{0.936 \pm 0.009}$ & $\mathbf{0.864 \pm 0.013}$ & $0.040 \pm 0.012$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Full feature list}
+\label{app:features}
+
+\todoJR{full feature listing per block.}
+
+\end{document}

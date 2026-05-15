@@ -71,22 +71,11 @@ NUMERIC_FEATURES = [
 # don't need to thread it through every call site.
 FORMATS: List[str] = ["png"]
 
-# Paper-grade styling: applied once at import. Affects every figure the script
-# produces. Override by editing rcParams here, not per-plot.
-sns.set_theme(style="whitegrid", context="paper", font_scale=0.95)
-plt.rcParams.update({
-    "savefig.dpi": 300,
-    "savefig.bbox": "tight",
-    "figure.dpi": 130,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "axes.titleweight": "bold",
-    "axes.titlesize": 10,
-    "axes.labelsize": 9,
-    "legend.fontsize": 8,
-    "legend.frameon": False,
-    "font.family": "sans-serif",
-})
+# Shared style with visualize_results.py so the EDA and headline figures look
+# like they came from the same paper.
+from _plot_style import apply_style, style_panel  # noqa: E402
+
+apply_style()
 
 PlotFn = Callable[[pd.DataFrame, Path], None]
 PLOT_REGISTRY: Dict[str, PlotFn] = {}
@@ -181,31 +170,63 @@ def numeric_distributions(df: pd.DataFrame, out_dir: Path) -> None:
 
 @register_plot("numeric_distributions_report")
 def numeric_distributions_report(df: pd.DataFrame, out_dir: Path) -> None:
-    """Curated 2x2 KDE grid for the report: 1 sequence + 2 structure + 1 evolution."""
+    """1x4 KDE strip for the report: 1 sequence + 2 structure + 1 evolution.
+
+    Layout mirrors MUSiCaL's side-by-side panel convention. Each panel
+    is a single class-overlaid KDE with theme_pubr-style spines.
+    """
     picks = [
-        ("BLOSUM62", "Sequence"),
-        ("plddt", "Structure"),
-        ("sasa", "Structure"),
-        ("phylop100way", "Evolution"),
+        ("BLOSUM62",     "Sequence",  "BLOSUM62 score"),
+        ("plddt",        "Structure", "pLDDT"),
+        ("sasa",         "Structure", r"SASA ($\AA^2$)"),
+        ("phylop100way", "Evolution", "phyloP (100-way)"),
     ]
-    picks = [(c, g) for c, g in picks if c in df.columns]
+    picks = [t for t in picks if t[0] in df.columns]
     if not picks:
         print("[eda] numeric_distributions_report: no picked features present, skipping")
         return
-    fig, axes = plt.subplots(2, 2, figsize=(5.5, 3.8))
-    axes_flat = axes.flatten()
-    for i, (ax, (col, group)) in enumerate(zip(axes_flat, picks)):
+    # Per-column x-axis clips. phyloP100way is bounded by UCSC at +10 with a
+    # long left tail to -20 from a tiny fraction (<0.1%) of accelerated sites;
+    # that tail dominates the panel width visually with no density to show
+    # for it, so we clip to the meaningful range. Upper bound goes a unit
+    # past the UCSC ceiling so the KDE's kernel-bandwidth tail at +10 isn't
+    # truncated mid-curve.
+    panel_xlim = {
+        "phylop100way": (-5, 11),
+    }
+    fig, axes = plt.subplots(1, len(picks), figsize=(2.4 * len(picks), 2.4))
+    axes_flat = np.atleast_1d(axes).flatten()
+    for ax, (col, group, xlabel) in zip(axes_flat, picks):
         sns.kdeplot(
             data=df, x=col, hue=LABEL_COL, hue_order=CLASS_ORDER,
             palette=CLASS_PALETTE, common_norm=False, fill=True,
-            alpha=0.35, linewidth=1.0, ax=ax, legend=(i == 0),
+            alpha=0.35, linewidth=1.1, ax=ax, legend=False,
         )
-        ax.set_title(f"{col}  ({group})")
-        ax.set_xlabel("")
-        ax.set_ylabel("density" if i % 2 == 0 else "")
-    for ax in axes_flat[len(picks):]:
-        ax.set_visible(False)
-    fig.tight_layout()
+        ax.set_title(f"{group}: {col}", loc="center", pad=4)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Density" if ax is axes_flat[0] else "")
+        ax.margins(x=0.02)
+        if col in panel_xlim:
+            ax.set_xlim(*panel_xlim[col])
+        style_panel(ax)
+        # KDE plots don't need a horizontal gridline forest; matplotlib
+        # already shows the density envelope clearly.
+        ax.yaxis.grid(False)
+
+    # Figure-level legend at the bottom so the class swatch doesn't sit on
+    # top of the KDE curves in any panel.
+    import matplotlib.patches as mpatches
+    handles = [
+        mpatches.Patch(color=CLASS_PALETTE[c], alpha=0.55,
+                       label=CLASS_DISPLAY_NAMES.get(c, c.title()))
+        for c in CLASS_ORDER
+    ]
+    fig.legend(
+        handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.02),
+        ncol=len(handles), frameon=False, fontsize=10,
+        handlelength=1.0, columnspacing=1.6,
+    )
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
     _save(fig, out_dir, "numeric_distributions_report")
 
 

@@ -1,9 +1,12 @@
 # data and results
 data/*
 !data/README.md
-results/*
-!results/README.md
-!results/figures/
+results/
+logs/
+
+# stray build / run artefacts
+*.log
+texput.log
 
 # python
 __pycache__/

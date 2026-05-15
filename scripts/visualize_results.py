@@ -19,15 +19,26 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Callable, Dict
+from typing import Callable, Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from _plot_style import (
+    apply_style, style_panel, annotate_bars, draw_chance_line,
+    ACCENT, ACCENT_MID, NEUTRAL, TIER_PALETTE,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CSV = ROOT / "results_new_v2/experiments.csv"
+
+# Output formats, set from --format in main(). Module-global so plot functions
+# don't thread it through every call site.
+FORMATS: List[str] = ["png"]
+
+apply_style()
 
 # Tiered: single-modality, pairwise combos, then the union.
 FEATURE_SET_ORDER = [
@@ -49,6 +60,21 @@ FEATURE_SET_LABEL = {
     "seq_evo":    "Sequence + Evolution",
     "struct_evo": "Structure + Evolution",
     "all":        "All Combined",
+}
+# Short labels for figure x-axes. Long names rotate awkwardly and clip the
+# legend at the report's figsize; short names fit horizontally. Tables keep
+# the long names via FEATURE_SET_LABEL.
+FEATURE_SET_SHORT = {
+    "sequence":   "Seq",
+    "structure":  "Str",
+    "evolution":  "Evo",
+    # Two-line labels for the combos so they fit horizontally under each bar
+    # without colliding with neighbors. Singles stay one line on purpose;
+    # the height mismatch is invisible because bars share an x-axis baseline.
+    "seq_struct": "Seq+\nStr",
+    "seq_evo":    "Seq+\nEvo",
+    "struct_evo": "Str+\nEvo",
+    "all":        "All",
 }
 MODEL_LABEL = {
     "random_forest": "Random Forest",
@@ -76,6 +102,10 @@ SPLIT_LABEL = {"val": "Validation", "test": "Test"}
 
 def _fs(name: str) -> str:
     return FEATURE_SET_LABEL.get(name, name)
+
+
+def _fs_short(name: str) -> str:
+    return FEATURE_SET_SHORT.get(name, name)
 
 
 def _ml(name: str) -> str:
@@ -137,10 +167,11 @@ def register_plot(name: str):
 
 def _save(fig, out_dir: Path, name: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{name}.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight")
+    for ext in FORMATS:
+        path = out_dir / f"{name}.{ext}"
+        fig.savefig(path)
+        print(f"[results] wrote {path}")
     plt.close(fig)
-    print(f"[results] wrote {path}")
 
 
 def _filter_split(df: pd.DataFrame, split: str) -> pd.DataFrame:
@@ -163,9 +194,15 @@ def _agg(df: pd.DataFrame, split: str, metrics: list[str]) -> pd.DataFrame:
 def _grouped_bar(
     ax, agg: pd.DataFrame, metric: str,
     x_order: list[str], hue_order: list[str], palette: dict,
-    width_total: float = 0.8, capsize: float = 3.0,
+    width_total: float = 0.8, capsize: float = 2.5,
+    annotate: bool = False, annotate_fmt: str = "{:.2f}",
+    annotate_fontsize: float = 6.5,
 ) -> None:
-    """Manual grouped bar with yerr, since we already have aggregated data."""
+    """Grouped bar with yerr; we already have aggregated data so seaborn would
+    re-aggregate and lose the precomputed stds. If annotate=True, writes the
+    mean above each bar so the reader can read values directly without
+    inferring them from bar height (the failure mode that gets papered over by
+    a truncated y-axis)."""
     x = np.arange(len(x_order))
     n = len(hue_order)
     width = width_total / n
@@ -179,40 +216,130 @@ def _grouped_bar(
                 means.append(np.nan)
                 stds.append(np.nan)
         offset = (i - (n - 1) / 2) * width
+        positions = x + offset
         ax.bar(
-            x + offset, means, width, yerr=stds, capsize=capsize,
+            positions, means, width, yerr=stds, capsize=capsize,
             label=_ml(h) if h in MODEL_LABEL else h,
-            color=palette[h], edgecolor="black", linewidth=0.5,
+            color=palette[h], edgecolor="black", linewidth=0.4,
+            error_kw={"elinewidth": 0.7, "ecolor": "#333"},
         )
+        if annotate:
+            for xpos, mean, std in zip(positions, means, stds):
+                if np.isnan(mean):
+                    continue
+                top = mean + (std if not np.isnan(std) else 0.0)
+                ax.text(
+                    xpos, top + 0.005, annotate_fmt.format(mean),
+                    ha="center", va="bottom",
+                    fontsize=annotate_fontsize, color="#222",
+                )
     ax.set_xticks(x)
     ax.set_xticklabels([_fs(fs) if fs in FEATURE_SET_LABEL else fs for fs in x_order])
 
 
-def _zoom_ylim(means: np.ndarray, stds: np.ndarray, pad: float = 0.03) -> tuple[float, float]:
-    lo = float(np.nanmin(means - stds)) - pad
-    hi = float(np.nanmax(means + stds)) + pad
-    return max(0.0, lo), min(1.0, hi)
+# Per-metric y-axis floor. The point is to anchor to a meaningful reference
+# (chance line for binary classifiers, zero for calibration error) rather than
+# the data window, which is what produced the distorted figure in the first
+# draft.
+METRIC_FLOOR = {
+    "macro_f1":          0.5,
+    "weighted_f1":       0.5,
+    "accuracy":          0.5,
+    "balanced_accuracy": 0.5,
+    "roc_auc":           0.5,
+    "pr_auc":            0.0,  # baseline is class prevalence, plotted separately
+    "f1_benign":         0.5,
+    "f1_oncogenic":      0.5,
+    "brier_score":       0.0,
+    "ece":               0.0,
+}
+
+
+def _metric_ylim(metric: str, means: np.ndarray, stds: np.ndarray,
+                 headroom: float = 0.04) -> tuple[float, float]:
+    """Anchor the lower bound at a meaningful reference (chance for AUC-ish
+    metrics, zero for calibration); only the upper bound is data-driven."""
+    floor = METRIC_FLOOR.get(metric, 0.0)
+    hi = float(np.nanmax(means + np.nan_to_num(stds))) + headroom
+    return floor, min(1.0, max(hi, floor + 0.05))
 
 
 # ---------------------------------------------------------------------------
 # Headline plots: one per metric (auto-registered below)
 # ---------------------------------------------------------------------------
 
+def _draw_panel_bars(
+    ax, feature_sets: list[str], means: list[float], stds: list[float],
+    palette: dict, *, annotate: bool = True, annotate_fmt: str = "{:.2f}",
+) -> None:
+    """One MUSiCaL-style bar panel. Bars are tier-colored via `palette`,
+    error bars are thin, and value labels sit above each bar in bold.
+    """
+    x = np.arange(len(feature_sets))
+    colors = [palette[fs] for fs in feature_sets]
+    ax.bar(
+        x, means, width=0.7, color=colors, alpha=0.95,
+        edgecolor="#333", linewidth=0.6,
+        yerr=stds, capsize=2.0,
+        error_kw={"elinewidth": 0.7, "ecolor": "#333"},
+    )
+    if annotate:
+        # Position labels above the upper end of the error bar so the
+        # numeric value never gets clipped by the cap.
+        tops = [m + (s if not np.isnan(s) else 0.0) for m, s in zip(means, stds)]
+        annotate_bars(ax, x, tops, fmt=annotate_fmt, offset=0.012)
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [_fs_short(fs) if fs in FEATURE_SET_SHORT else fs for fs in feature_sets],
+        rotation=0, ha="center",
+    )
+    ax.set_xlim(-0.7, len(feature_sets) - 0.3)
+
+
 def _draw_headline(df: pd.DataFrame, out_dir: Path, split: str, metric: str) -> None:
+    """Facet by model: three panels side-by-side, one per classifier.
+    Within each panel, seven bars (one per feature configuration) colored
+    by tier so the union bar (accent blue) jumps out against the
+    single-modality bars (neutral gray) and pairwise combos (mid-blue).
+    Mirrors the MUSiCaL Random / Hard negatives layout.
+    """
     agg = _agg(df, split, [metric])
-    fig, ax = plt.subplots(figsize=(9, 4.2))
-    _grouped_bar(ax, agg, metric, FEATURE_SET_ORDER, MODEL_ORDER, MODEL_PALETTE)
-    for sep in TIER_BREAKS:
-        ax.axvline(sep, color="#888", linestyle="--", alpha=0.4, linewidth=0.8)
-    means = agg[(metric, "mean")].to_numpy()
-    stds = agg[(metric, "std")].to_numpy()
-    ax.set_ylim(*_zoom_ylim(means, stds))
-    n_seeds = df["seed"].nunique()
-    ax.set_ylabel(_mt(metric))
-    ax.set_xlabel("")
-    ax.set_title(f"{_sp(split)} {_mt(metric)} by feature set and model (mean ± std, {n_seeds} seeds)")
-    ax.legend(title="Model", loc="lower right", framealpha=0.9, fontsize=9)
-    plt.setp(ax.get_xticklabels(), rotation=20, ha="right", fontsize=8.5)
+    n_models = len(MODEL_ORDER)
+    fig, axes = plt.subplots(
+        1, n_models, figsize=(2.5 * n_models + 1.0, 2.6), sharey=True,
+    )
+    axes = np.atleast_1d(axes)
+
+    floor = METRIC_FLOOR.get(metric, 0.0)
+    ymax = 1.0 if metric != "ece" else 0.15
+
+    for i, (ax, model) in enumerate(zip(axes, MODEL_ORDER)):
+        means = [float(agg.loc[(fs, model), (metric, "mean")])
+                 for fs in FEATURE_SET_ORDER]
+        stds = [float(agg.loc[(fs, model), (metric, "std")])
+                for fs in FEATURE_SET_ORDER]
+        _draw_panel_bars(ax, FEATURE_SET_ORDER, means, stds, TIER_PALETTE)
+
+        ax.set_title(_ml(model), pad=4)
+        ax.set_ylim(0.0 if floor < 0.5 else 0.0, ymax)
+        style_panel(ax)
+        if i == 0:
+            ax.set_ylabel(f"Test {_mt(metric)}")
+        else:
+            ax.tick_params(axis="y", labelleft=False)
+
+    # Tier legend lives outside the panels; three swatches, no frame.
+    handles = [
+        plt.Rectangle((0, 0), 1, 1, color=NEUTRAL),
+        plt.Rectangle((0, 0), 1, 1, color=ACCENT_MID),
+        plt.Rectangle((0, 0), 1, 1, color=ACCENT),
+    ]
+    fig.legend(
+        handles, ["Single modality", "Pairwise combo", "Union (all)"],
+        loc="lower center", ncol=3, bbox_to_anchor=(0.5, -0.06),
+        fontsize=8, handlelength=1.0, columnspacing=1.4, frameon=False,
+    )
+
     fig.tight_layout()
     _save(fig, out_dir, f"headline_{metric}")
 
@@ -226,6 +353,95 @@ def _make_headline_fn(metric: str) -> PlotFn:
 
 for _m in HEADLINE_METRICS:
     register_plot(f"headline_{_m}")(_make_headline_fn(_m))
+
+
+@register_plot("headline_macro_f1_perconfig")
+def headline_macro_f1_perconfig(df: pd.DataFrame, out_dir: Path, split: str) -> None:
+    """Same shape as headline_macro_f1 but bars are colored per feature
+    configuration (FEATURE_SET_PALETTE) instead of by tier. Used to
+    color-match the ROC curves underneath in the report's headline
+    figure, so the eye can track a single config across both rows.
+    """
+    metric = "macro_f1"
+    agg = _agg(df, split, [metric])
+    n_models = len(MODEL_ORDER)
+    fig, axes = plt.subplots(
+        1, n_models, figsize=(2.5 * n_models + 1.0, 2.6), sharey=True,
+    )
+    axes = np.atleast_1d(axes)
+
+    floor = METRIC_FLOOR.get(metric, 0.0)
+    ymax = 1.0
+
+    for i, (ax, model) in enumerate(zip(axes, MODEL_ORDER)):
+        means = [float(agg.loc[(fs, model), (metric, "mean")])
+                 for fs in FEATURE_SET_ORDER]
+        stds = [float(agg.loc[(fs, model), (metric, "std")])
+                for fs in FEATURE_SET_ORDER]
+        _draw_panel_bars(ax, FEATURE_SET_ORDER, means, stds, FEATURE_SET_PALETTE)
+        ax.set_title(_ml(model), pad=4)
+        ax.set_ylim(0.0 if floor < 0.5 else 0.0, ymax)
+        style_panel(ax)
+        if i == 0:
+            ax.set_ylabel(f"Test {_mt(metric)}")
+        else:
+            ax.tick_params(axis="y", labelleft=False)
+
+    fig.tight_layout()
+    _save(fig, out_dir, "headline_macro_f1_perconfig")
+
+
+@register_plot("headline_f1_auc")
+def headline_f1_auc(df: pd.DataFrame, out_dir: Path, split: str) -> None:
+    """Two-row variant of the headline figure for the report.
+
+    Top row: macro-F1 across the 7 feature configurations per model.
+    Bottom row: ROC-AUC over the same configurations / models.
+    Same tier coloring, same bar order, shared y-axis within a row.
+    """
+    metrics = ["macro_f1", "roc_auc"]
+    agg = _agg(df, split, metrics)
+    n_models = len(MODEL_ORDER)
+    fig, axes = plt.subplots(
+        2, n_models, figsize=(2.5 * n_models + 1.0, 4.8),
+        sharey="row",
+    )
+
+    for row, metric in enumerate(metrics):
+        floor = METRIC_FLOOR.get(metric, 0.0)
+        ymax = 1.0
+        for i, model in enumerate(MODEL_ORDER):
+            ax = axes[row, i]
+            means = [float(agg.loc[(fs, model), (metric, "mean")])
+                     for fs in FEATURE_SET_ORDER]
+            stds = [float(agg.loc[(fs, model), (metric, "std")])
+                    for fs in FEATURE_SET_ORDER]
+            _draw_panel_bars(ax, FEATURE_SET_ORDER, means, stds, TIER_PALETTE)
+            ax.set_ylim(0.0 if floor < 0.5 else 0.0, ymax)
+            style_panel(ax)
+            if row == 0:
+                ax.set_title(_ml(model), pad=4)
+            if i == 0:
+                ax.set_ylabel(f"Test {_mt(metric)}")
+            else:
+                ax.tick_params(axis="y", labelleft=False)
+            # Only show x-tick labels on the bottom row.
+            if row == 0:
+                ax.tick_params(axis="x", labelbottom=False)
+
+    handles = [
+        plt.Rectangle((0, 0), 1, 1, color=NEUTRAL),
+        plt.Rectangle((0, 0), 1, 1, color=ACCENT_MID),
+        plt.Rectangle((0, 0), 1, 1, color=ACCENT),
+    ]
+    fig.legend(
+        handles, ["Single modality", "Pairwise combo", "Union (all)"],
+        loc="lower center", ncol=3, bbox_to_anchor=(0.5, -0.03),
+        fontsize=8, handlelength=1.0, columnspacing=1.4, frameon=False,
+    )
+
+    fig.tight_layout()
+    _save(fig, out_dir, "headline_f1_auc")
 
 
 # ---------------------------------------------------------------------------
@@ -461,27 +677,65 @@ def calibration_metrics(df: pd.DataFrame, out_dir: Path, split: str) -> None:
 
 @register_plot("feature_lift")
 def feature_lift(df: pd.DataFrame, out_dir: Path, split: str) -> None:
+    """Facet by model: three panels, one per classifier. Each panel shows
+    four bars (the three pairwise combos and the union) measuring lift
+    over the best single-modality constituent. Same MUSiCaL recipe as
+    headline: tier coloring, value labels in bold, no in-panel legend.
+    """
     agg = _agg(df, split, ["macro_f1"])
     multi = list(COMPONENT_OF.keys())
-    x = np.arange(len(multi))
-    width = 0.8 / len(MODEL_ORDER)
-    fig, ax = plt.subplots(figsize=(9, 5))
-    for i, m in enumerate(MODEL_ORDER):
+
+    n_models = len(MODEL_ORDER)
+    fig, axes = plt.subplots(
+        1, n_models, figsize=(2.2 * n_models + 0.6, 2.6), sharey=True,
+    )
+    axes = np.atleast_1d(axes)
+
+    all_lifts: list[float] = []
+    panel_lifts: dict[str, list[float]] = {}
+    for model in MODEL_ORDER:
         lifts = []
         for fs in multi:
-            target = agg.loc[(fs, m), ("macro_f1", "mean")]
-            best_single = max(agg.loc[(c, m), ("macro_f1", "mean")] for c in COMPONENT_OF[fs])
+            target = float(agg.loc[(fs, model), ("macro_f1", "mean")])
+            best_single = max(
+                float(agg.loc[(c, model), ("macro_f1", "mean")])
+                for c in COMPONENT_OF[fs]
+            )
             lifts.append(target - best_single)
-        offset = (i - (len(MODEL_ORDER) - 1) / 2) * width
-        ax.bar(x + offset, lifts, width, label=_ml(m), color=MODEL_PALETTE[m],
-               edgecolor="black", linewidth=0.5)
-    ax.axhline(0, color="black", linewidth=0.5)
-    ax.set_xticks(x)
-    ax.set_xticklabels([_fs(fs) for fs in multi], rotation=15, ha="right")
-    ax.set_xlabel("Multi-modal feature set")
-    ax.set_ylabel("Δ Macro-F1 vs best constituent single-modality")
-    ax.set_title(f"Lift from combining feature sets ({_sp(split)})")
-    ax.legend(title="Model")
+        panel_lifts[model] = lifts
+        all_lifts.extend(lifts)
+
+    ymax = max(0.14, max(all_lifts) + 0.025)
+    x = np.arange(len(multi))
+    colors = [TIER_PALETTE[fs] for fs in multi]
+
+    for i, (ax, model) in enumerate(zip(axes, MODEL_ORDER)):
+        lifts = panel_lifts[model]
+        ax.bar(x, lifts, width=0.7, color=colors, alpha=0.95,
+               edgecolor="#333", linewidth=0.6)
+        annotate_bars(ax, x, lifts, fmt="+{:.02f}", offset=0.004)
+        ax.axhline(0, color="#222", linewidth=0.6)
+        ax.set_xticks(x)
+        ax.set_xticklabels([_fs_short(fs) for fs in multi], rotation=0, ha="center")
+        ax.set_xlim(-0.7, len(multi) - 0.3)
+        ax.set_ylim(0, ymax)
+        ax.set_title(_ml(model), pad=4)
+        style_panel(ax)
+        if i == 0:
+            ax.set_ylabel(r"$\Delta$ Macro-F1 vs best single modality")
+        else:
+            ax.tick_params(axis="y", labelleft=False)
+
+    handles = [
+        plt.Rectangle((0, 0), 1, 1, color=ACCENT_MID),
+        plt.Rectangle((0, 0), 1, 1, color=ACCENT),
+    ]
+    fig.legend(
+        handles, ["Pairwise combo", "Union (all)"],
+        loc="lower center", ncol=2, bbox_to_anchor=(0.5, -0.06),
+        fontsize=8, handlelength=1.0, columnspacing=1.4, frameon=False,
+    )
+
     fig.tight_layout()
     _save(fig, out_dir, "feature_lift")
 
@@ -557,12 +811,17 @@ def main() -> None:
                    help="Plot names to skip.")
     p.add_argument("--list", action="store_true",
                    help="Print registered plot names and exit.")
+    p.add_argument("--format", choices=["png", "pdf", "both"], default="png",
+                   help="Output file format. Use 'pdf' for vector report figures.")
     args = p.parse_args()
 
     if args.list:
         for name in PLOT_REGISTRY:
             print(name)
         return
+
+    global FORMATS
+    FORMATS = ["png", "pdf"] if args.format == "both" else [args.format]
 
     out_dir = args.out or (args.csv.parent / "analysis_graphs")
     print(f"[results] loading {args.csv}")
